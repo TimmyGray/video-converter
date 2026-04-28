@@ -33,7 +33,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 if ! command -v node >/dev/null 2>&1; then
-  echo "Node.js is required to run this app. Install Node.js 20+ and try again."
+  echo "Node.js is required to run this app. Install Node.js and try again."
   exit 1
 fi
 node open-browser.mjs server.js
@@ -44,13 +44,13 @@ setlocal
 cd /d %~dp0
 where node >nul 2>&1
 if errorlevel 1 (
-  echo Node.js is required to run this app. Install Node.js 20+ and try again.
+  echo Node.js is required to run this app. Install Node.js and try again.
   exit /b 1
 )
 node open-browser.mjs server.js
 `;
 
-const releaseReadme = `# VideoForge release bundle (video-forge)
+const releaseReadme = `# VideoForge release bundle
 
 ## Quick start
 

@@ -1,6 +1,7 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
+  // Enables a self-contained runtime in `.next/standalone` for release packaging.
   output: 'standalone',
   turbopack: {
     resolveAlias: {

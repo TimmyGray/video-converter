@@ -2,19 +2,19 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 
 const serverEntry = process.argv[2] ?? '.next/standalone/server.js';
-const serverStartupDelayMs = 1200;
+const serverStartupDelayMs = Number(process.env.SERVER_STARTUP_DELAY_MS ?? 1200);
 
 if (!existsSync(serverEntry)) {
-  console.error(`Server entry not found: ${serverEntry}`);
+  console.error(`Server entry not found: ${serverEntry}. Run \`npm run build\` first.`);
   process.exit(1);
 }
 
 const bindAllHosts = new Set(['0.0.0.0', '::', '[::]']);
-const hostname = process.env.HOSTNAME && !bindAllHosts.has(process.env.HOSTNAME)
+const resolvedHostname = process.env.HOSTNAME && !bindAllHosts.has(process.env.HOSTNAME)
   ? process.env.HOSTNAME
   : 'localhost';
 const port = process.env.PORT ?? '3000';
-const appUrl = `http://${hostname}:${port}`;
+const appUrl = `http://${resolvedHostname}:${port}`;
 
 const server = spawn(process.execPath, [serverEntry], {
   stdio: 'inherit',
