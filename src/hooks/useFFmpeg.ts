@@ -4,7 +4,7 @@ import { useState, useRef, useCallback } from 'react';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import { VideoFormat } from '@/types';
-import { getOutputFileName } from '@/utils/formatUtils';
+import { getOutputFileName, getFormatInfo } from '@/utils/formatUtils';
 
 const BASE_URL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
 
@@ -66,7 +66,7 @@ export function useFFmpeg(): UseFFmpegReturn {
       await ffmpeg.exec(['-i', inputName, '-preset', 'ultrafast', outputFileName]);
 
       const data = await ffmpeg.readFile(outputFileName);
-      const blob = new Blob([data as unknown as ArrayBuffer], { type: 'video/' + outputFormat });
+      const blob = new Blob([data as unknown as ArrayBuffer], { type: getFormatInfo(outputFormat).mimeType });
       const url = URL.createObjectURL(blob);
 
       await ffmpeg.deleteFile(inputName);
