@@ -6,6 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "start:browser": "node scripts/open-browser.mjs .next/standalone/server.js",
+    "release:build": "npm run build && node scripts/create-release.mjs",
     "lint": "eslint",
     "test": "jest",
     "test:ci": "jest --ci"
