@@ -6,7 +6,8 @@ import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import { VideoFormat } from '@/types';
 import { getOutputFileName, getFormatInfo } from '@/utils/formatUtils';
 
-const BASE_URL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+const LOCAL_BASE_URL = '/ffmpeg-core';
+const CDN_BASE_URL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
 
 export interface UseFFmpegReturn {
   isLoaded: boolean;
@@ -33,10 +34,18 @@ export function useFFmpeg(): UseFFmpegReturn {
     try {
       const ffmpeg = new FFmpeg();
       ffmpegRef.current = ffmpeg;
-      await ffmpeg.load({
-        coreURL: await toBlobURL(`${BASE_URL}/ffmpeg-core.js`, 'text/javascript'),
-        wasmURL: await toBlobURL(`${BASE_URL}/ffmpeg-core.wasm`, 'application/wasm'),
-      });
+      try {
+        await ffmpeg.load({
+          coreURL: await toBlobURL(`${LOCAL_BASE_URL}/ffmpeg-core.js`, 'text/javascript'),
+          wasmURL: await toBlobURL(`${LOCAL_BASE_URL}/ffmpeg-core.wasm`, 'application/wasm'),
+        });
+      } catch {
+        // Keep a CDN fallback to avoid hard failures when local assets are unavailable.
+        await ffmpeg.load({
+          coreURL: await toBlobURL(`${CDN_BASE_URL}/ffmpeg-core.js`, 'text/javascript'),
+          wasmURL: await toBlobURL(`${CDN_BASE_URL}/ffmpeg-core.wasm`, 'application/wasm'),
+        });
+      }
       setIsLoaded(true);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load FFmpeg';

@@ -1,8 +1,10 @@
 import type { NextConfig } from 'next';
 
+const outputMode = process.env.NEXT_OUTPUT_MODE === 'export' ? 'export' : 'standalone';
+
 const nextConfig: NextConfig = {
   // Enables a self-contained runtime in `.next/standalone` for release packaging.
-  output: 'standalone',
+  output: outputMode,
   turbopack: {
     resolveAlias: {
       '@ffmpeg/ffmpeg': '@ffmpeg/ffmpeg/dist/umd/ffmpeg.js',

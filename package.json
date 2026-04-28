@@ -4,10 +4,14 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "npm run prepare:ffmpeg-assets && next build",
+    "build:desktop:web": "cross-env NEXT_OUTPUT_MODE=export npm run build",
     "start": "next start",
     "start:browser": "node scripts/open-browser.mjs .next/standalone/server.js",
     "release:build": "npm run build && node scripts/create-release.mjs",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "prepare:ffmpeg-assets": "node scripts/prepare-ffmpeg-assets.mjs",
     "lint": "eslint",
     "test": "jest",
     "test:ci": "jest --ci"
@@ -17,6 +21,7 @@
     "@emotion/server": "^11.11.0",
     "@emotion/styled": "^11.14.1",
     "@ffmpeg/ffmpeg": "^0.12.15",
+    "@ffmpeg/core": "^0.12.6",
     "@ffmpeg/util": "^0.12.2",
     "@mui/icons-material": "^9.0.0",
     "@mui/material": "^9.0.0",
@@ -26,6 +31,8 @@
     "react-dom": "19.2.4"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.1.0",
+    "cross-env": "^7.0.3",
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

@@ -13,7 +13,7 @@ A browser-based video converter built with Next.js, Material UI, and FFmpeg WebA
 
 ## Architecture
 
-```
+```text
 src/
 ├── app/              # Next.js App Router pages and layouts
 │   ├── layout.tsx    # Root layout with ThemeRegistry
@@ -77,10 +77,26 @@ This generates:
 End users can run one of these files to start the app and open it in a browser automatically.
 On macOS/Linux, make `start.sh` executable once before first launch (`chmod +x start.sh`).
 
+## Desktop Installers (Tauri)
+
+Build desktop installers from this repo (no Node.js install required on end-user machines):
+
+```bash
+npm run tauri:build
+```
+
+Generated installers are placed under `src-tauri/target/release/bundle/`:
+
+- Windows: `.msi` / setup `.exe`
+- macOS: `.dmg`
+- Linux: `.AppImage` / `.deb`
 
 ## GitHub Release Automation
 
-A GitHub Actions workflow publishes release artifacts (`.zip` and `.tar.gz`) containing the `release/video-forge` bundle.
+A GitHub Actions workflow publishes:
+
+- Browser bundle archives (`.zip` and `.tar.gz`) from `release/video-forge`
+- Desktop installer artifacts built with Tauri for Windows, macOS, and Linux
 
 ### Automatic release on tag push
 
