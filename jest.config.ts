@@ -10,7 +10,8 @@ const config: Config = {
     '^.+\\.(ts|tsx)$': ['ts-jest', { tsconfig: { jsx: 'react-jsx' } }],
   },
   transformIgnorePatterns: ['node_modules/(?!(@ffmpeg)/)'],
-  testPathIgnorePatterns: ['<rootDir>/node_modules/', '<rootDir>/.next/'],
+  testPathIgnorePatterns: ['<rootDir>/node_modules/', '<rootDir>/.next/', '<rootDir>/release/'],
+  modulePathIgnorePatterns: ['<rootDir>/release/'],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json'],
 };
 

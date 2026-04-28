@@ -41,7 +41,7 @@ cd /d %~dp0
 node open-browser.mjs server.js
 `;
 
-const releaseReadme = `# VideoForge release bundle
+const releaseReadme = `# Video Converter (VideoForge) release bundle
 
 ## Quick start
 
@@ -53,6 +53,6 @@ The app starts a local server and opens your browser automatically.
 
 await writeFile(path.join(releaseDir, 'start.sh'), startSh, 'utf8');
 await writeFile(path.join(releaseDir, 'start.cmd'), startCmd, 'utf8');
-await writeFile(path.join(releaseDir, 'README.txt'), releaseReadme, 'utf8');
+await writeFile(path.join(releaseDir, 'README.md'), releaseReadme, 'utf8');
 
 console.log(`Release bundle ready: ${releaseDir}`);

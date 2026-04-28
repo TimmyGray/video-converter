@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 
 const serverEntry = process.argv[2] ?? '.next/standalone/server.js';
+const BROWSER_LAUNCH_DELAY_MS = 1200;
 
 if (!existsSync(serverEntry)) {
   console.error(`Server entry not found: ${serverEntry}`);
@@ -50,7 +51,7 @@ const openInBrowser = () => {
   browserProcess.unref();
 };
 
-setTimeout(openInBrowser, 1200);
+setTimeout(openInBrowser, BROWSER_LAUNCH_DELAY_MS);
 
 const shutdown = (signal) => {
   if (!server.killed) {
