@@ -1,4 +1,4 @@
-import { cp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
@@ -50,7 +50,7 @@ if errorlevel 1 (
 node open-browser.mjs server.js
 `;
 
-const releaseReadme = `# VideoForge release bundle
+const releaseReadme = `# VideoForge release bundle (video-forge)
 
 ## Quick start
 
@@ -61,6 +61,7 @@ The app starts a local server and opens your browser automatically.
 `;
 
 await writeFile(path.join(releaseDir, 'start.sh'), startSh, 'utf8');
+await chmod(path.join(releaseDir, 'start.sh'), 0o755);
 await writeFile(path.join(releaseDir, 'start.cmd'), startCmd, 'utf8');
 await writeFile(path.join(releaseDir, 'README.md'), releaseReadme, 'utf8');
 
