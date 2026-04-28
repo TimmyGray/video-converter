@@ -77,6 +77,22 @@ This generates:
 End users can run one of these files to start the app and open it in a browser automatically.
 On macOS/Linux, make `start.sh` executable once before first launch (`chmod +x start.sh`).
 
+
+## GitHub Release Automation
+
+A GitHub Actions workflow publishes release artifacts (`.zip` and `.tar.gz`) containing the `release/video-forge` bundle.
+
+### Automatic release on tag push
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+### Manual release from Actions tab
+
+Run the **Release** workflow and provide `tag_name` (for example `v1.0.0`).
+
 ## Run production build and open browser automatically
 
 ```bash
