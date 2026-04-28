@@ -75,6 +75,7 @@ This generates:
 - `release/video-forge/start.sh` (macOS/Linux)
 
 End users can run one of these files to start the app and open it in a browser automatically.
+On macOS/Linux, make `start.sh` executable once before first launch (`chmod +x start.sh`).
 
 ## Run production build and open browser automatically
 

@@ -2,14 +2,15 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 
 const serverEntry = process.argv[2] ?? '.next/standalone/server.js';
-const BROWSER_LAUNCH_DELAY_MS = 1200;
+const SERVER_STARTUP_DELAY_MS = 1200;
 
 if (!existsSync(serverEntry)) {
   console.error(`Server entry not found: ${serverEntry}`);
   process.exit(1);
 }
 
-const hostname = process.env.HOSTNAME && process.env.HOSTNAME !== '0.0.0.0'
+const bindAllHosts = new Set(['0.0.0.0', '::', '[::]']);
+const hostname = process.env.HOSTNAME && !bindAllHosts.has(process.env.HOSTNAME)
   ? process.env.HOSTNAME
   : 'localhost';
 const port = process.env.PORT ?? '3000';
@@ -51,7 +52,7 @@ const openInBrowser = () => {
   browserProcess.unref();
 };
 
-setTimeout(openInBrowser, BROWSER_LAUNCH_DELAY_MS);
+setTimeout(openInBrowser, SERVER_STARTUP_DELAY_MS);
 
 const shutdown = (signal) => {
   if (!server.killed) {
