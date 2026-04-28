@@ -61,6 +61,29 @@ npm run build
 npm start
 ```
 
+## Release Bundle (one-click browser start)
+
+Create a distributable folder that can be shared as a release artifact:
+
+```bash
+npm run release:build
+```
+
+This generates:
+
+- `release/video-forge/start.cmd` (Windows)
+- `release/video-forge/start.sh` (macOS/Linux)
+
+End users can run one of these files to start the app and open it in a browser automatically.
+On macOS/Linux, make `start.sh` executable once before first launch (`chmod +x start.sh`).
+
+## Run production build and open browser automatically
+
+```bash
+npm run build
+npm run start:browser
+```
+
 ## Technology Stack
 
 - **Next.js 16** – App Router, TypeScript, Turbopack
