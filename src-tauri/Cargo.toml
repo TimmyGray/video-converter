@@ -1,6 +1,6 @@
 [package]
 name = "video_forge_desktop"
-version = "1.3.0"
+version = "1.4.0"
 description = "VideoForge desktop wrapper"
 authors = ["VideoForge"]
 license = ""

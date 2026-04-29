@@ -1,13 +1,16 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Card, CardContent, Chip, Typography } from '@mui/material';
-import { CropSettings } from '@/types';
+import { CropMode, CropSettings } from '@/types';
 
 interface CropPreviewPanelProps {
   cropSettings: CropSettings;
   file?: File | null;
   hasFile?: boolean;
+  onCropModeChange?: (mode: CropMode) => void;
+  onCustomCropChange?: (field: 'width' | 'height' | 'x' | 'y', value: string) => void;
+  disabled?: boolean;
 }
 
 interface PreviewRect {
@@ -99,12 +102,36 @@ interface SourceDimensions {
   height: number;
 }
 
-export default function CropPreviewPanel({ cropSettings, file, hasFile }: CropPreviewPanelProps) {
+interface EditableRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+type DragHandle = 'move' | 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
+
+const MIN_CROP_PERCENT = 1;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+export default function CropPreviewPanel({
+  cropSettings,
+  file,
+  hasFile,
+  onCropModeChange,
+  onCustomCropChange,
+  disabled,
+}: CropPreviewPanelProps) {
   const hasSourceFile = Boolean(file) || Boolean(hasFile);
+  const frameRef = useRef<HTMLDivElement | null>(null);
   const [sourceAspectRatio, setSourceAspectRatio] = useState(16 / 9);
   const [sourceDimensions, setSourceDimensions] = useState<SourceDimensions | null>(null);
   const [frameDataUrl, setFrameDataUrl] = useState<string | null>(null);
   const [framePreviewStatus, setFramePreviewStatus] = useState<FramePreviewStatus>('idle');
+  const [isDraggingRect, setIsDraggingRect] = useState(false);
 
   useEffect(() => {
     if (!file) {
@@ -207,12 +234,135 @@ export default function CropPreviewPanel({ cropSettings, file, hasFile }: CropPr
   const helperText = useMemo(() => {
     if (!hasSourceFile) return 'Select a file to apply crop settings';
     if (framePreviewStatus === 'loading') return 'Extracting first frame...';
+    if (framePreviewStatus === 'ready' && sourceDimensions && onCustomCropChange && !disabled) {
+      return `Source ${sourceDimensions.width}x${sourceDimensions.height} - drag frame borders to adjust crop`;
+    }
     if (framePreviewStatus === 'ready' && sourceDimensions) {
       return `Source ${sourceDimensions.width}x${sourceDimensions.height}`;
     }
 
     return 'Based on selected crop settings';
-  }, [hasSourceFile, framePreviewStatus, sourceDimensions]);
+  }, [hasSourceFile, framePreviewStatus, sourceDimensions, onCustomCropChange, disabled]);
+
+  const canEditPreview = hasSourceFile && !disabled && typeof onCustomCropChange === 'function';
+
+  const applyRectToInputs = useCallback(
+    (nextRect: EditableRect) => {
+      if (!onCustomCropChange) return;
+
+      onCustomCropChange('x', formatPercent(nextRect.x));
+      onCustomCropChange('y', formatPercent(nextRect.y));
+      onCustomCropChange('width', formatPercent(nextRect.width));
+      onCustomCropChange('height', formatPercent(nextRect.height));
+    },
+    [onCustomCropChange]
+  );
+
+  const startDrag = useCallback(
+    (handle: DragHandle) => (event: React.MouseEvent<HTMLDivElement>) => {
+      if (!canEditPreview || !onCustomCropChange) return;
+
+      if (event.button !== 0) return;
+
+      const frameElement = frameRef.current;
+      if (!frameElement) return;
+
+      const frameBounds = frameElement.getBoundingClientRect();
+      if (!frameBounds.width || !frameBounds.height) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const startRect: EditableRect = {
+        x: rect.left,
+        y: rect.top,
+        width: rect.width,
+        height: rect.height,
+      };
+
+      if (cropSettings.mode !== 'custom') {
+        if (!onCropModeChange) return;
+        onCropModeChange('custom');
+      }
+
+      applyRectToInputs(startRect);
+      setIsDraggingRect(true);
+
+      const startX = event.clientX;
+      const startY = event.clientY;
+
+      const onMouseMove = (moveEvent: MouseEvent) => {
+        const dxPercent = ((moveEvent.clientX - startX) / frameBounds.width) * 100;
+        const dyPercent = ((moveEvent.clientY - startY) / frameBounds.height) * 100;
+
+        const right = startRect.x + startRect.width;
+        const bottom = startRect.y + startRect.height;
+
+        let nextX = startRect.x;
+        let nextY = startRect.y;
+        let nextWidth = startRect.width;
+        let nextHeight = startRect.height;
+
+        if (handle === 'move') {
+          nextX = clamp(startRect.x + dxPercent, 0, 100 - startRect.width);
+          nextY = clamp(startRect.y + dyPercent, 0, 100 - startRect.height);
+        }
+
+        if (handle.includes('e')) {
+          nextWidth = clamp(startRect.width + dxPercent, MIN_CROP_PERCENT, 100 - nextX);
+        }
+
+        if (handle.includes('s')) {
+          nextHeight = clamp(startRect.height + dyPercent, MIN_CROP_PERCENT, 100 - nextY);
+        }
+
+        if (handle.includes('w')) {
+          nextX = clamp(startRect.x + dxPercent, 0, right - MIN_CROP_PERCENT);
+          nextWidth = clamp(right - nextX, MIN_CROP_PERCENT, 100 - nextX);
+        }
+
+        if (handle.includes('n')) {
+          nextY = clamp(startRect.y + dyPercent, 0, bottom - MIN_CROP_PERCENT);
+          nextHeight = clamp(bottom - nextY, MIN_CROP_PERCENT, 100 - nextY);
+        }
+
+        applyRectToInputs({
+          x: nextX,
+          y: nextY,
+          width: nextWidth,
+          height: nextHeight,
+        });
+      };
+
+      const onMouseUp = () => {
+        window.removeEventListener('mousemove', onMouseMove);
+        window.removeEventListener('mouseup', onMouseUp);
+        setIsDraggingRect(false);
+      };
+
+      window.addEventListener('mousemove', onMouseMove);
+      window.addEventListener('mouseup', onMouseUp);
+    },
+    [applyRectToInputs, canEditPreview, cropSettings.mode, onCropModeChange, onCustomCropChange, rect]
+  );
+
+  const resizeHandles: Array<{
+    key: DragHandle;
+    cursor: string;
+    style: React.CSSProperties;
+  }> = useMemo(
+    () => [
+      { key: 'nw', cursor: 'nwse-resize', style: { top: -6, left: -6 } },
+      { key: 'ne', cursor: 'nesw-resize', style: { top: -6, right: -6 } },
+      { key: 'sw', cursor: 'nesw-resize', style: { bottom: -6, left: -6 } },
+      { key: 'se', cursor: 'nwse-resize', style: { bottom: -6, right: -6 } },
+      { key: 'n', cursor: 'ns-resize', style: { top: -6, left: '50%', transform: 'translateX(-50%)' } },
+      { key: 's', cursor: 'ns-resize', style: { bottom: -6, left: '50%', transform: 'translateX(-50%)' } },
+      { key: 'e', cursor: 'ew-resize', style: { right: -6, top: '50%', transform: 'translateY(-50%)' } },
+      { key: 'w', cursor: 'ew-resize', style: { left: -6, top: '50%', transform: 'translateY(-50%)' } },
+    ],
+    []
+  );
 
   return (
     <Card
@@ -246,6 +396,7 @@ export default function CropPreviewPanel({ cropSettings, file, hasFile }: CropPr
           }}
         >
           <Box
+            ref={frameRef}
             sx={{
               position: 'relative',
               width: '100%',
@@ -308,6 +459,7 @@ export default function CropPreviewPanel({ cropSettings, file, hasFile }: CropPr
 
             <Box
               data-testid="crop-preview-rect"
+              onMouseDown={canEditPreview ? startDrag('move') : undefined}
               sx={{
                 position: 'absolute',
                 left: `${rect.left}%`,
@@ -318,8 +470,43 @@ export default function CropPreviewPanel({ cropSettings, file, hasFile }: CropPr
                 boxShadow: '0 0 0 999px rgba(0,0,0,0.38)',
                 borderRadius: 0,
                 zIndex: 3,
+                cursor: canEditPreview ? (isDraggingRect ? 'grabbing' : 'grab') : 'default',
               }}
             />
+
+            {canEditPreview && (
+              <Box
+                sx={{
+                  position: 'absolute',
+                  left: `${rect.left}%`,
+                  top: `${rect.top}%`,
+                  width: `${rect.width}%`,
+                  height: `${rect.height}%`,
+                  zIndex: 4,
+                  pointerEvents: 'none',
+                }}
+              >
+                {resizeHandles.map((handle) => (
+                  <Box
+                    key={handle.key}
+                    data-testid={`crop-preview-handle-${handle.key}`}
+                    onMouseDown={startDrag(handle.key)}
+                    sx={{
+                      position: 'absolute',
+                      width: 12,
+                      height: 12,
+                      borderRadius: 999,
+                      border: '1px solid rgba(0,0,0,0.5)',
+                      background: '#FFB74D',
+                      boxShadow: '0 0 0 1px rgba(255,183,77,0.7)',
+                      cursor: handle.cursor,
+                      pointerEvents: 'auto',
+                      ...handle.style,
+                    }}
+                  />
+                ))}
+              </Box>
+            )}
           </Box>
         </Box>
 

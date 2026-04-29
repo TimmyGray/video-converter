@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import CropPreviewPanel from '@/components/CropPreviewPanel';
 import { CropSettings } from '@/types';
 
@@ -40,5 +40,65 @@ describe('CropPreviewPanel', () => {
       />
     );
     expect(screen.getByTestId('crop-preview-label')).toHaveTextContent('Custom 50%×50%');
+  });
+
+  it('shows resize handles when preview editing is enabled', () => {
+    render(
+      <CropPreviewPanel
+        cropSettings={{
+          mode: 'custom',
+          custom: { width: '50', height: '50', x: '10', y: '20' },
+        }}
+        hasFile
+        onCropModeChange={jest.fn()}
+        onCustomCropChange={jest.fn()}
+      />
+    );
+
+    expect(screen.getByTestId('crop-preview-handle-se')).toBeInTheDocument();
+    expect(screen.getByTestId('crop-preview-handle-nw')).toBeInTheDocument();
+  });
+
+  it('updates custom crop values when dragging a resize handle', () => {
+    const onCustomCropChange = jest.fn();
+
+    render(
+      <CropPreviewPanel
+        cropSettings={{
+          mode: 'custom',
+          custom: { width: '50', height: '50', x: '10', y: '20' },
+        }}
+        hasFile
+        onCropModeChange={jest.fn()}
+        onCustomCropChange={onCustomCropChange}
+      />
+    );
+
+    const frame = screen.getByTestId('crop-preview-frame');
+    Object.defineProperty(frame, 'getBoundingClientRect', {
+      value: () => ({
+        x: 0,
+        y: 0,
+        width: 200,
+        height: 100,
+        top: 0,
+        left: 0,
+        right: 200,
+        bottom: 100,
+        toJSON: () => ({}),
+      }),
+    });
+
+    fireEvent.mouseDown(screen.getByTestId('crop-preview-handle-se'), {
+      button: 0,
+      clientX: 100,
+      clientY: 100,
+    });
+    fireEvent.mouseMove(window, { clientX: 120, clientY: 120 });
+    fireEvent.mouseUp(window);
+
+    expect(onCustomCropChange).toHaveBeenCalled();
+    expect(onCustomCropChange).toHaveBeenCalledWith('width', expect.any(String));
+    expect(onCustomCropChange).toHaveBeenCalledWith('height', expect.any(String));
   });
 });
