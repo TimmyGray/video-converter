@@ -61,6 +61,40 @@ npm run build
 npm start
 ```
 
+## Docker
+
+This repository includes a production multi-stage Dockerfile based on Next.js standalone output.
+
+Build the image:
+
+```bash
+docker build -t videoforge .
+```
+
+Run the container:
+
+```bash
+docker run --rm -p 3000:3000 videoforge
+```
+
+Then open [http://localhost:3000](http://localhost:3000).
+
+Optional runtime environment variables:
+
+- `PORT` (default `3000`)
+- `HOSTNAME` (default `0.0.0.0`)
+
+Example:
+
+```bash
+docker run --rm -p 8080:8080 -e PORT=8080 videoforge
+```
+
+Notes:
+
+- FFmpeg core assets are prepared during `npm run build`, so the container image includes local FFmpeg WASM assets.
+- GUI-based desktop native save dialogs are not available in typical container/server deployments. In Docker deployments, use browser download behavior or a browser that supports the File System Access API.
+
 ## Release Bundle (one-click browser start)
 
 Create a distributable folder that can be shared as a release artifact:
