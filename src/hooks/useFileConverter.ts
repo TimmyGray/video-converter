@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { ConversionJob, CropMode, VideoFormat } from '@/types';
-import { useFFmpeg } from './useFFmpeg';
+import { useFFmpeg } from '@/hooks/useFFmpeg';
 
 export interface UseFileConverterReturn {
   job: ConversionJob;
@@ -33,18 +33,23 @@ const initialJob: ConversionJob = {
   progress: 0,
   outputUrl: null,
   outputFileName: null,
+  outputSizeBytes: null,
+  conversionDurationMs: null,
+  ffmpegMode: null,
+  performanceNote: null,
   errorMessage: null,
 };
 
 export function useFileConverter(): UseFileConverterReturn {
   const [job, setJob] = useState<ConversionJob>(initialJob);
-  const { isLoaded, isLoading, loadError, loadFFmpeg, transcode } = useFFmpeg();
+  const { isLoaded, isLoading, loadError, ffmpegMode, loadFFmpeg, transcode } = useFFmpeg();
 
   const selectFile = useCallback((file: File) => {
     setJob((prev) => ({
       ...initialJob,
       outputFormat: prev.outputFormat,
       cropSettings: prev.cropSettings,
+      ffmpegMode: prev.ffmpegMode,
       file,
     }));
   }, []);
@@ -79,21 +84,33 @@ export function useFileConverter(): UseFileConverterReturn {
   const startConversion = useCallback(async () => {
     if (!job.file) return;
 
-    setJob((prev) => ({ ...prev, status: 'loading', progress: 0, errorMessage: null }));
+    setJob((prev) => ({
+      ...prev,
+      status: 'loading',
+      progress: 0,
+      outputUrl: null,
+      outputFileName: null,
+      outputSizeBytes: null,
+      conversionDurationMs: null,
+      performanceNote: null,
+      errorMessage: null,
+    }));
 
     try {
       if (!isLoaded) {
         await loadFFmpeg();
       }
 
-      setJob((prev) => ({ ...prev, status: 'converting' }));
+      setJob((prev) => ({ ...prev, status: 'converting', ffmpegMode: ffmpegMode ?? prev.ffmpegMode }));
+      const conversionStart = performance.now();
 
-      const { url, fileName } = await transcode(
+      const { url, fileName, sizeBytes, ffmpegMode: usedMode, performanceNote } = await transcode(
         job.file,
         job.outputFormat,
         job.cropSettings,
-        (progress) => setJob((prev) => ({ ...prev, progress }))
+        (progress: number) => setJob((prev) => ({ ...prev, progress }))
       );
+      const durationMs = Math.max(1, Math.round(performance.now() - conversionStart));
 
       setJob((prev) => ({
         ...prev,
@@ -101,6 +118,10 @@ export function useFileConverter(): UseFileConverterReturn {
         progress: 100,
         outputUrl: url,
         outputFileName: fileName,
+        outputSizeBytes: sizeBytes,
+        conversionDurationMs: durationMs,
+        ffmpegMode: usedMode,
+        performanceNote,
       }));
     } catch (err) {
       console.error('[VideoConverter] Conversion error:', err);
@@ -119,7 +140,7 @@ export function useFileConverter(): UseFileConverterReturn {
       }
       setJob((prev) => ({ ...prev, status: 'error', errorMessage: message }));
     }
-  }, [job.file, job.outputFormat, job.cropSettings, isLoaded, loadFFmpeg, transcode]);
+  }, [job.file, job.outputFormat, job.cropSettings, isLoaded, ffmpegMode, loadFFmpeg, transcode]);
 
   const reset = useCallback(() => {
     if (job.outputUrl) URL.revokeObjectURL(job.outputUrl);

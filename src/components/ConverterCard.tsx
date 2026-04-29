@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Card, CardContent, Box, Button, Typography, Divider } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
@@ -12,6 +12,7 @@ import CropSelector from './CropSelector';
 import CropPreviewPanel from './CropPreviewPanel';
 import ConversionProgress from './ConversionProgress';
 import FileInfoCard from './FileInfoCard';
+import SaveDestinationDialog from './SaveDestinationDialog';
 import { useFileConverter } from '@/hooks/useFileConverter';
 
 export default function ConverterCard() {
@@ -27,6 +28,12 @@ export default function ConverterCard() {
 
   const isActive = job.status === 'loading' || job.status === 'converting';
   const isDone = job.status === 'done';
+  const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
+
+  const handleReset = () => {
+    setIsSaveDialogOpen(false);
+    reset();
+  };
 
   return (
     <Box
@@ -106,6 +113,10 @@ export default function ConverterCard() {
               status={job.status}
               errorMessage={job.errorMessage}
               cropSettings={job.cropSettings}
+              outputSizeBytes={job.outputSizeBytes}
+              conversionDurationMs={job.conversionDurationMs}
+              ffmpegMode={job.ffmpegMode}
+              performanceNote={job.performanceNote}
             />
           </Box>
 
@@ -147,16 +158,14 @@ export default function ConverterCard() {
                 color="success"
                 size="large"
                 startIcon={<DownloadIcon />}
-                component="a"
-                href={job.outputUrl}
-                download={job.outputFileName ?? 'output'}
+                onClick={() => setIsSaveDialogOpen(true)}
                 sx={{
                   flexGrow: 1,
                   background: 'linear-gradient(135deg, #00C853, #69F0AE)',
                   boxShadow: '0 0 20px rgba(0,200,83,0.4)',
                 }}
               >
-                Download {job.outputFileName}
+                Save {job.outputFileName}
               </Button>
             )}
 
@@ -165,7 +174,7 @@ export default function ConverterCard() {
               color="secondary"
               size="large"
               startIcon={<RestartAltIcon />}
-              onClick={reset}
+              onClick={handleReset}
               disabled={isActive}
             >
               Reset
@@ -175,6 +184,18 @@ export default function ConverterCard() {
       </Card>
 
       <CropPreviewPanel cropSettings={job.cropSettings} hasFile={Boolean(job.file)} />
+
+      <SaveDestinationDialog
+        open={isSaveDialogOpen}
+        onClose={() => setIsSaveDialogOpen(false)}
+        outputUrl={job.outputUrl}
+        outputFileName={job.outputFileName}
+        outputFormat={job.outputFormat}
+        outputSizeBytes={job.outputSizeBytes}
+        conversionDurationMs={job.conversionDurationMs}
+        ffmpegMode={job.ffmpegMode}
+        performanceNote={job.performanceNote}
+      />
     </Box>
   );
 }

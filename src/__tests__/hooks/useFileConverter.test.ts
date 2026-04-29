@@ -6,8 +6,15 @@ jest.mock('@/hooks/useFFmpeg', () => ({
     isLoaded: false,
     isLoading: false,
     loadError: null,
+    ffmpegMode: 'multithreaded',
     loadFFmpeg: jest.fn().mockResolvedValue(undefined),
-    transcode: jest.fn().mockResolvedValue({ url: 'blob:mock', fileName: 'output.mp4' }),
+    transcode: jest.fn().mockResolvedValue({
+      url: 'blob:mock',
+      fileName: 'output.mp4',
+      sizeBytes: 2048,
+      ffmpegMode: 'multithreaded',
+      performanceNote: null,
+    }),
   }),
 }));
 
@@ -19,6 +26,8 @@ describe('useFileConverter', () => {
     expect(result.current.job.outputFormat).toBe('mp4');
     expect(result.current.job.cropSettings.mode).toBe('none');
     expect(result.current.job.progress).toBe(0);
+    expect(result.current.job.outputSizeBytes).toBeNull();
+    expect(result.current.job.conversionDurationMs).toBeNull();
   });
 
   it('selectFile updates file', () => {
@@ -68,6 +77,8 @@ describe('useFileConverter', () => {
     expect(result.current.job.status).toBe('done');
     expect(result.current.job.outputUrl).toBe('blob:mock');
     expect(result.current.job.outputFileName).toBe('output.mp4');
+    expect(result.current.job.outputSizeBytes).toBe(2048);
+    expect(result.current.job.conversionDurationMs).toBeGreaterThan(0);
   });
 
   it('startConversion does nothing if no file selected', async () => {

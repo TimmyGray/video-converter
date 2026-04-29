@@ -11,17 +11,28 @@ const LOCAL_ST_BASE_URL = '/ffmpeg-core';
 const CDN_MT_BASE_URL = 'https://unpkg.com/@ffmpeg/core-mt@0.12.6/dist/umd';
 const CDN_ST_BASE_URL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
 
+export type FFmpegMode = 'multithreaded' | 'single-threaded';
+
+export interface TranscodeResult {
+  url: string;
+  fileName: string;
+  sizeBytes: number;
+  ffmpegMode: FFmpegMode | null;
+  performanceNote: string | null;
+}
+
 export interface UseFFmpegReturn {
   isLoaded: boolean;
   isLoading: boolean;
   loadError: string | null;
+  ffmpegMode: FFmpegMode | null;
   loadFFmpeg: () => Promise<void>;
   transcode: (
     file: File,
     outputFormat: VideoFormat,
     cropSettings: CropSettings,
     onProgress: (progress: number) => void
-  ) => Promise<{ url: string; fileName: string }>;
+  ) => Promise<TranscodeResult>;
 }
 
 function getCropFilter(cropSettings: CropSettings): string | null {
@@ -71,6 +82,7 @@ function getCropFilter(cropSettings: CropSettings): string | null {
 
 function getCommandAttempts(
   inputName: string,
+  inputFileName: string,
   outputFormat: VideoFormat,
   outputFileName: string,
   cropFilter: string | null
@@ -78,10 +90,35 @@ function getCommandAttempts(
   const filterArgs = cropFilter ? ['-vf', cropFilter] : [];
 
   if (outputFormat === 'webm') {
+    const isWebmInput = /\.webm$/i.test(inputFileName);
+
     return [
-      // Primary WebM profile
+      ...(isWebmInput && !cropFilter ? [['-i', inputName, '-c', 'copy', outputFileName]] : []),
+      // Fast WebM profile tuned for WASM encoding speed.
+      [
+        '-i',
+        inputName,
+        ...filterArgs,
+        '-c:v',
+        'libvpx',
+        '-deadline',
+        'realtime',
+        '-cpu-used',
+        '8',
+        '-crf',
+        '36',
+        '-b:v',
+        '0',
+        '-threads',
+        '4',
+        '-c:a',
+        'libvorbis',
+        '-q:a',
+        '5',
+        outputFileName,
+      ],
+      // Fallback profile if speed-tuned args are unsupported.
       ['-i', inputName, ...filterArgs, '-c:v', 'libvpx', '-c:a', 'libvorbis', outputFileName],
-      // Fallback profile in case a codec is unavailable
       ['-i', inputName, ...filterArgs, outputFileName],
     ];
   }
@@ -92,60 +129,89 @@ function getCommandAttempts(
   ];
 }
 
+function getWebmPerformanceNote(outputFormat: VideoFormat, ffmpegMode: FFmpegMode | null): string | null {
+  if (outputFormat !== 'webm') return null;
+
+  if (ffmpegMode === 'single-threaded') {
+    return 'WebM is encoded by libvpx in software and FFmpeg is running in single-threaded mode, so conversion can be very slow.';
+  }
+
+  return 'WebM is encoded by libvpx in software (WebAssembly), which is usually slower than MP4/H.264.';
+}
+
 export function useFFmpeg(): UseFFmpegReturn {
   const ffmpegRef = useRef<FFmpeg | null>(null);
+  const ffmpegModeRef = useRef<FFmpegMode | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [ffmpegMode, setFfmpegMode] = useState<FFmpegMode | null>(null);
 
   const loadFFmpeg = useCallback(async () => {
     if (isLoaded || isLoading) return;
+
     setIsLoading(true);
     setLoadError(null);
+    setFfmpegMode(null);
+    ffmpegModeRef.current = null;
+
     try {
       const ffmpeg = new FFmpeg();
       ffmpegRef.current = ffmpeg;
 
-      // Try local multi-threaded core first (best performance, uses all CPU cores).
-      // Falls back to local single-threaded, then CDN MT, then CDN ST.
-      const attempts: Array<() => Promise<boolean>> = [
-        async () =>
-          ffmpeg.load({
-            coreURL: await toBlobURL(`${LOCAL_MT_BASE_URL}/ffmpeg-core.js`, 'text/javascript'),
-            wasmURL: await toBlobURL(`${LOCAL_MT_BASE_URL}/ffmpeg-core.wasm`, 'application/wasm'),
-            workerURL: await toBlobURL(`${LOCAL_MT_BASE_URL}/ffmpeg-core.worker.js`, 'text/javascript'),
-          }),
-        async () =>
-          ffmpeg.load({
-            coreURL: await toBlobURL(`${LOCAL_ST_BASE_URL}/ffmpeg-core.js`, 'text/javascript'),
-            wasmURL: await toBlobURL(`${LOCAL_ST_BASE_URL}/ffmpeg-core.wasm`, 'application/wasm'),
-          }),
-        async () =>
-          ffmpeg.load({
-            coreURL: await toBlobURL(`${CDN_MT_BASE_URL}/ffmpeg-core.js`, 'text/javascript'),
-            wasmURL: await toBlobURL(`${CDN_MT_BASE_URL}/ffmpeg-core.wasm`, 'application/wasm'),
-            workerURL: await toBlobURL(`${CDN_MT_BASE_URL}/ffmpeg-core.worker.js`, 'text/javascript'),
-          }),
-        async () =>
-          ffmpeg.load({
-            coreURL: await toBlobURL(`${CDN_ST_BASE_URL}/ffmpeg-core.js`, 'text/javascript'),
-            wasmURL: await toBlobURL(`${CDN_ST_BASE_URL}/ffmpeg-core.wasm`, 'application/wasm'),
-          }),
+      const attempts: Array<{ mode: FFmpegMode; load: () => Promise<boolean> }> = [
+        {
+          mode: 'multithreaded',
+          load: async () =>
+            ffmpeg.load({
+              coreURL: await toBlobURL(`${LOCAL_MT_BASE_URL}/ffmpeg-core.js`, 'text/javascript'),
+              wasmURL: await toBlobURL(`${LOCAL_MT_BASE_URL}/ffmpeg-core.wasm`, 'application/wasm'),
+              workerURL: await toBlobURL(`${LOCAL_MT_BASE_URL}/ffmpeg-core.worker.js`, 'text/javascript'),
+            }),
+        },
+        {
+          mode: 'single-threaded',
+          load: async () =>
+            ffmpeg.load({
+              coreURL: await toBlobURL(`${LOCAL_ST_BASE_URL}/ffmpeg-core.js`, 'text/javascript'),
+              wasmURL: await toBlobURL(`${LOCAL_ST_BASE_URL}/ffmpeg-core.wasm`, 'application/wasm'),
+            }),
+        },
+        {
+          mode: 'multithreaded',
+          load: async () =>
+            ffmpeg.load({
+              coreURL: await toBlobURL(`${CDN_MT_BASE_URL}/ffmpeg-core.js`, 'text/javascript'),
+              wasmURL: await toBlobURL(`${CDN_MT_BASE_URL}/ffmpeg-core.wasm`, 'application/wasm'),
+              workerURL: await toBlobURL(`${CDN_MT_BASE_URL}/ffmpeg-core.worker.js`, 'text/javascript'),
+            }),
+        },
+        {
+          mode: 'single-threaded',
+          load: async () =>
+            ffmpeg.load({
+              coreURL: await toBlobURL(`${CDN_ST_BASE_URL}/ffmpeg-core.js`, 'text/javascript'),
+              wasmURL: await toBlobURL(`${CDN_ST_BASE_URL}/ffmpeg-core.wasm`, 'application/wasm'),
+            }),
+        },
       ];
 
       let lastError: unknown;
       for (const attempt of attempts) {
         try {
-          await attempt();
+          await attempt.load();
+          ffmpegModeRef.current = attempt.mode;
+          setFfmpegMode(attempt.mode);
           lastError = undefined;
           break;
         } catch (err) {
           lastError = err;
         }
       }
+
       if (lastError !== undefined) {
-        const msg = lastError instanceof Error ? lastError.message : String(lastError);
-        throw new Error(`Failed to load FFmpeg engine. ${msg}`);
+        const message = lastError instanceof Error ? lastError.message : String(lastError);
+        throw new Error(`Failed to load FFmpeg engine. ${message}`);
       }
 
       setIsLoaded(true);
@@ -163,14 +229,15 @@ export function useFFmpeg(): UseFFmpegReturn {
       outputFormat: VideoFormat,
       cropSettings: CropSettings,
       onProgress: (progress: number) => void
-    ): Promise<{ url: string; fileName: string }> => {
+    ): Promise<TranscodeResult> => {
       const ffmpeg = ffmpegRef.current;
       if (!ffmpeg) throw new Error('FFmpeg not loaded');
 
-      const inputName = 'input' + file.name.slice(file.name.lastIndexOf('.'));
+      const extensionIndex = file.name.lastIndexOf('.');
+      const inputExtension = extensionIndex >= 0 ? file.name.slice(extensionIndex) : '';
+      const inputName = `input${inputExtension}`;
       const outputFileName = getOutputFileName(file.name, outputFormat);
 
-      // Collect FFmpeg log output so we can include it in error messages.
       const logs: string[] = [];
       const logHandler = ({ message }: { message: string }) => {
         logs.push(message);
@@ -186,7 +253,7 @@ export function useFFmpeg(): UseFFmpegReturn {
         await ffmpeg.writeFile(inputName, await fetchFile(file));
 
         const cropFilter = getCropFilter(cropSettings);
-        const attempts = getCommandAttempts(inputName, outputFormat, outputFileName, cropFilter);
+        const attempts = getCommandAttempts(inputName, file.name, outputFormat, outputFileName, cropFilter);
         let exitCode = -1;
 
         for (const command of attempts) {
@@ -195,9 +262,8 @@ export function useFFmpeg(): UseFFmpegReturn {
         }
 
         if (exitCode !== 0) {
-          // Pick the most relevant log lines (errors/warnings from the tail of the log).
           const relevant = logs
-            .filter((l) => /error|invalid|unknown|no such|unsupported|codec|preset/i.test(l))
+            .filter((line) => /error|invalid|unknown|no such|unsupported|codec|preset/i.test(line))
             .slice(-8);
           const detail = (relevant.length > 0 ? relevant : logs.slice(-8)).join('\n');
           throw new Error(`FFmpeg failed after retry. ${detail || 'No details available.'}`);
@@ -212,13 +278,17 @@ export function useFFmpeg(): UseFFmpegReturn {
         await ffmpeg.deleteFile(inputName).catch(() => {});
         await ffmpeg.deleteFile(outputFileName).catch(() => {});
 
-        return { url, fileName: outputFileName };
+        return {
+          url,
+          fileName: outputFileName,
+          sizeBytes: blob.size,
+          ffmpegMode: ffmpegModeRef.current,
+          performanceNote: getWebmPerformanceNote(outputFormat, ffmpegModeRef.current),
+        };
       } catch (err) {
-        // Best-effort cleanup so stale files don't accumulate in the WASM FS.
         await ffmpeg.deleteFile(inputName).catch(() => {});
         await ffmpeg.deleteFile(outputFileName).catch(() => {});
 
-        // Re-throw with enriched context when the original message is empty.
         if (err instanceof Error && !err.message) {
           throw new Error(`Conversion failed (no details from FFmpeg). Log:\n${logs.slice(-10).join('\n')}`);
         }
@@ -231,5 +301,5 @@ export function useFFmpeg(): UseFFmpegReturn {
     []
   );
 
-  return { isLoaded, isLoading, loadError, loadFFmpeg, transcode };
+  return { isLoaded, isLoading, loadError, ffmpegMode, loadFFmpeg, transcode };
 }

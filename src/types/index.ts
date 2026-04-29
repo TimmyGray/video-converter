@@ -27,5 +27,9 @@ export interface ConversionJob {
   progress: number;
   outputUrl: string | null;
   outputFileName: string | null;
+  outputSizeBytes: number | null;
+  conversionDurationMs: number | null;
+  ffmpegMode: 'multithreaded' | 'single-threaded' | null;
+  performanceNote: string | null;
   errorMessage: string | null;
 }

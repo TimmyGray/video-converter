@@ -12,6 +12,10 @@ interface FileInfoCardProps {
   status: ConversionStatus;
   errorMessage: string | null;
   cropSettings: CropSettings;
+  outputSizeBytes?: number | null;
+  conversionDurationMs?: number | null;
+  ffmpegMode?: 'multithreaded' | 'single-threaded' | null;
+  performanceNote?: string | null;
 }
 
 const STATUS_COLOR: Record<ConversionStatus, string> = {
@@ -39,7 +43,27 @@ function getCropPreviewLabel(cropSettings: CropSettings): string {
   return `Crop: ${width}%×${height}% @ ${x || '0'}%,${y || '0'}%`;
 }
 
-export default function FileInfoCard({ file, status, errorMessage, cropSettings }: FileInfoCardProps) {
+function formatDuration(ms: number | null | undefined): string {
+  if (!ms || ms <= 0) return '-';
+
+  const totalSeconds = ms / 1000;
+  if (totalSeconds < 60) return `${totalSeconds.toFixed(1)}s`;
+
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.round(totalSeconds % 60);
+  return `${minutes}m ${seconds}s`;
+}
+
+export default function FileInfoCard({
+  file,
+  status,
+  errorMessage,
+  cropSettings,
+  outputSizeBytes,
+  conversionDurationMs,
+  ffmpegMode,
+  performanceNote,
+}: FileInfoCardProps) {
   const hasFile = Boolean(file);
 
   const color = STATUS_COLOR[status];
@@ -118,6 +142,26 @@ export default function FileInfoCard({ file, status, errorMessage, cropSettings 
           data-testid="error-message"
         >
           {errorMessage || 'An unexpected error occurred. Please try a different file or format.'}
+        </Typography>
+      )}
+
+      {hasFile && status === 'done' && (
+        <Typography
+          variant="caption"
+          sx={{ color: 'rgba(255,255,255,0.65)', width: '100%' }}
+          data-testid="result-metadata"
+        >
+          {`Converted in ${formatDuration(conversionDurationMs)} • Result size ${formatFileSize(outputSizeBytes ?? 0)} • FFmpeg ${ffmpegMode === 'multithreaded' ? 'Multi-threaded' : ffmpegMode === 'single-threaded' ? 'Single-threaded' : 'Unknown'}`}
+        </Typography>
+      )}
+
+      {hasFile && status === 'done' && performanceNote && (
+        <Typography
+          variant="caption"
+          sx={{ color: 'rgba(255,183,77,0.9)', width: '100%' }}
+          data-testid="performance-note"
+        >
+          {performanceNote}
         </Typography>
       )}
     </Box>

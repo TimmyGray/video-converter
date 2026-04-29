@@ -56,6 +56,25 @@ describe('FileInfoCard', () => {
     expect(screen.getByTestId('status-chip')).toHaveTextContent('Converting');
   });
 
+  it('shows result metadata when conversion is done', () => {
+    const file = makeFile('video.mp4', 512);
+    render(
+      <FileInfoCard
+        file={file}
+        status="done"
+        errorMessage={null}
+        cropSettings={defaultCrop}
+        outputSizeBytes={4096}
+        conversionDurationMs={4200}
+        ffmpegMode="multithreaded"
+      />
+    );
+
+    expect(screen.getByTestId('result-metadata')).toHaveTextContent('Converted in 4.2s');
+    expect(screen.getByTestId('result-metadata')).toHaveTextContent('Result size 4 KB');
+    expect(screen.getByTestId('result-metadata')).toHaveTextContent('FFmpeg Multi-threaded');
+  });
+
   it('shows crop preview chip with custom crop details', () => {
     const file = makeFile('video.mp4', 512);
     render(
