@@ -23,6 +23,7 @@
 /src-tauri/target
 /src-tauri/gen
 /public/ffmpeg-core
+/public/ffmpeg-core-mt
 
 # misc
 .DS_Store

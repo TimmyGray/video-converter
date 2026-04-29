@@ -15,13 +15,12 @@ export default function Header() {
         boxShadow: '0 2px 20px rgba(255,140,0,0.15)',
       }}
     >
-      <Toolbar>
+      <Toolbar sx={{ justifyContent: 'center', minHeight: { xs: 64, sm: 70 } }}>
         <Box
           sx={{
             display: 'flex',
             alignItems: 'center',
             gap: 1.5,
-            flexGrow: 1,
           }}
         >
           <VideoLibraryIcon
@@ -43,16 +42,6 @@ export default function Header() {
             }}
           >
             VideoForge
-          </Typography>
-          <Typography
-            variant="caption"
-            sx={{
-              color: 'rgba(255,183,77,0.7)',
-              ml: 0.5,
-              display: { xs: 'none', sm: 'block' },
-            }}
-          >
-            Browser-based video converter
           </Typography>
         </Box>
       </Toolbar>

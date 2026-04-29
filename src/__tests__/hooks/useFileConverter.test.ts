@@ -17,6 +17,7 @@ describe('useFileConverter', () => {
     expect(result.current.job.file).toBeNull();
     expect(result.current.job.status).toBe('idle');
     expect(result.current.job.outputFormat).toBe('mp4');
+    expect(result.current.job.cropSettings.mode).toBe('none');
     expect(result.current.job.progress).toBe(0);
   });
 
@@ -31,6 +32,19 @@ describe('useFileConverter', () => {
     const { result } = renderHook(() => useFileConverter());
     act(() => result.current.selectFormat('webm'));
     expect(result.current.job.outputFormat).toBe('webm');
+  });
+
+  it('selectCropMode updates crop mode', () => {
+    const { result } = renderHook(() => useFileConverter());
+    act(() => result.current.selectCropMode('16:9'));
+    expect(result.current.job.cropSettings.mode).toBe('16:9');
+  });
+
+  it('updateCustomCrop updates custom crop fields', () => {
+    const { result } = renderHook(() => useFileConverter());
+    act(() => result.current.selectCropMode('custom'));
+    act(() => result.current.updateCustomCrop('width', '720'));
+    expect(result.current.job.cropSettings.custom.width).toBe('720');
   });
 
   it('reset clears job to initial state', () => {

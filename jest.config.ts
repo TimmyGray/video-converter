@@ -11,7 +11,7 @@ const config: Config = {
   },
   transformIgnorePatterns: ['node_modules/(?!(@ffmpeg)/)'],
   testPathIgnorePatterns: ['<rootDir>/node_modules/', '<rootDir>/.next/', '<rootDir>/release/'],
-  modulePathIgnorePatterns: ['<rootDir>/release/'],
+  modulePathIgnorePatterns: ['<rootDir>/.next/', '<rootDir>/release/'],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json'],
 };
 

@@ -8,8 +8,8 @@ describe('Header', () => {
     expect(screen.getByText('VideoForge')).toBeInTheDocument();
   });
 
-  it('renders the tagline', () => {
+  it('does not render the legacy tagline', () => {
     render(<Header />);
-    expect(screen.getByText(/Browser-based video converter/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Browser-based video converter/i)).not.toBeInTheDocument();
   });
 });

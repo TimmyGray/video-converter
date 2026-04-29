@@ -65,6 +65,7 @@ export default function FileDropZone({ file, onFileSelect, disabled }: FileDropZ
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const selectedFile = e.target.files?.[0];
       if (selectedFile) processFile(selectedFile);
+      e.currentTarget.value = '';
     },
     [processFile]
   );
@@ -99,6 +100,10 @@ export default function FileDropZone({ file, onFileSelect, disabled }: FileDropZ
         type="file"
         accept="video/*,.mkv,.avi,.mov"
         style={{ display: 'none' }}
+        onClick={(e) => {
+          // Allow selecting the same file repeatedly after reset/retry.
+          (e.currentTarget as HTMLInputElement).value = '';
+        }}
         onChange={handleInputChange}
         data-testid="file-input"
       />
