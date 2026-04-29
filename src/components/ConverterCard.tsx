@@ -183,7 +183,7 @@ export default function ConverterCard() {
         </CardContent>
       </Card>
 
-      <CropPreviewPanel cropSettings={job.cropSettings} hasFile={Boolean(job.file)} />
+      <CropPreviewPanel cropSettings={job.cropSettings} file={job.file} />
 
       <SaveDestinationDialog
         open={isSaveDialogOpen}
