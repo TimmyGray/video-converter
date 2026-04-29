@@ -1,10 +1,14 @@
 import { spawn } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
-import { platform } from 'node:os';
+import { homedir, platform } from 'node:os';
 import { basename, join } from 'node:path';
 import { NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
+const isStaticExportBuild = process.env.NEXT_OUTPUT_MODE === 'export';
+
+// output: export requires a statically analyzable dynamic config literal.
+export const dynamic = 'force-static';
 
 interface NativeSaveCapability {
   available: boolean;
@@ -28,7 +32,11 @@ function sanitizeFileName(fileName: string): string {
   return cleaned.length > 0 ? cleaned : 'converted-output.bin';
 }
 
-function runCommand(command: string, args: string[], env: NodeJS.ProcessEnv = {}): Promise<CommandResult> {
+function runCommand(
+  command: string,
+  args: string[],
+  env: Record<string, string | undefined> = {}
+): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       env: { ...process.env, ...env },
@@ -136,7 +144,7 @@ async function pickSavePathMac(defaultFileName: string): Promise<string | null> 
 }
 
 async function pickSavePathLinux(defaultFileName: string): Promise<string | null> {
-  const defaultPath = join(process.env.HOME || process.cwd(), defaultFileName);
+  const defaultPath = join(process.env.HOME || homedir(), defaultFileName);
   const result = await runCommand('zenity', [
     '--file-selection',
     '--save',
@@ -176,11 +184,28 @@ async function pickSavePath(defaultFileName: string): Promise<string | null> {
 }
 
 export async function GET(): Promise<NextResponse<NativeSaveCapability>> {
+  if (isStaticExportBuild) {
+    return NextResponse.json({
+      available: false,
+      reason: 'Native save endpoint is disabled in static export builds.',
+    });
+  }
+
   const capability = await canUseNativeDialog();
   return NextResponse.json(capability);
 }
 
 export async function POST(request: Request): Promise<NextResponse<NativeSaveResponse>> {
+  if (isStaticExportBuild) {
+    return NextResponse.json(
+      {
+        saved: false,
+        error: 'Native save endpoint is unavailable in static export builds.',
+      },
+      { status: 405 }
+    );
+  }
+
   try {
     const capability = await canUseNativeDialog();
     if (!capability.available) {

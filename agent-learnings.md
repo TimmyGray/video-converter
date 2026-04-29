@@ -21,3 +21,13 @@
 **Correct behavior:** Capability gating must include all runtime save paths (browser picker, Tauri native, and local server native dialog) before disabling primary actions.
 **Pattern / trigger:** Feature support checks in multi-runtime apps where web, desktop wrapper, and local server modes coexist.
 **Generalize?:** Yes
+
+### 2026-04-29 — Route segment config must be static in export mode
+
+**Trigger:** Test failure
+**Context:** Desktop web export build (`npm run build:desktop:web`) for [src/app/api/native-save/route.ts](src/app/api/native-save/route.ts).
+**Wrong action:** Exported `dynamic` using a runtime conditional expression.
+**Root cause:** I applied environment-based branching to a route segment config that Next requires to be statically analyzable at compile time.
+**Correct behavior:** Keep route segment config exports (`dynamic`, `revalidate`, etc.) as static literals and move environment conditionals into handler logic.
+**Pattern / trigger:** Next App Router route handlers when targeting `output: export` and adjusting segment config for build compatibility.
+**Generalize?:** Yes
