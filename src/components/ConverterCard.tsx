@@ -56,10 +56,12 @@ export default function ConverterCard() {
         <CardContent sx={{ p: { xs: 2.5, sm: 4 } }}>
           <Box
             sx={{
-              position: 'relative',
+              position: { xs: 'static', sm: 'relative' },
               display: 'flex',
-              alignItems: 'center',
-              minHeight: { xs: 40, sm: 44 },
+              flexDirection: { xs: 'column', sm: 'row' },
+              alignItems: { xs: 'flex-start', sm: 'center' },
+              gap: { xs: 0.75, sm: 0 },
+              minHeight: { xs: 'auto', sm: 44 },
               mb: 2.5,
             }}
           >
@@ -89,9 +91,10 @@ export default function ConverterCard() {
               variant="h4"
               component="h1"
               sx={{
-                position: 'absolute',
-                left: '50%',
-                transform: 'translateX(-50%)',
+                position: { xs: 'static', sm: 'absolute' },
+                left: { sm: '50%' },
+                transform: { sm: 'translateX(-50%)' },
+                alignSelf: { xs: 'center', sm: 'auto' },
                 fontWeight: 800,
                 background: 'linear-gradient(135deg, #FF8C00 0%, #FFD700 50%, #FF8C00 100%)',
                 WebkitBackgroundClip: 'text',
