@@ -101,4 +101,53 @@ describe('CropPreviewPanel', () => {
     expect(onCustomCropChange).toHaveBeenCalledWith('width', expect.any(String));
     expect(onCustomCropChange).toHaveBeenCalledWith('height', expect.any(String));
   });
+
+  it('changes only x and y when dragging the crop area', () => {
+    const onCustomCropChange = jest.fn();
+
+    render(
+      <CropPreviewPanel
+        cropSettings={{
+          mode: 'custom',
+          custom: { width: '50', height: '50', x: '10', y: '20' },
+        }}
+        hasFile
+        onCropModeChange={jest.fn()}
+        onCustomCropChange={onCustomCropChange}
+      />
+    );
+
+    const frame = screen.getByTestId('crop-preview-frame');
+    Object.defineProperty(frame, 'getBoundingClientRect', {
+      value: () => ({
+        x: 0,
+        y: 0,
+        width: 200,
+        height: 100,
+        top: 0,
+        left: 0,
+        right: 200,
+        bottom: 100,
+        toJSON: () => ({}),
+      }),
+    });
+
+    fireEvent.mouseDown(screen.getByTestId('crop-preview-rect'), {
+      button: 0,
+      clientX: 100,
+      clientY: 100,
+    });
+    fireEvent.mouseMove(window, { clientX: 120, clientY: 120 });
+    fireEvent.mouseUp(window);
+
+    const widthCalls = onCustomCropChange.mock.calls.filter(([field]) => field === 'width');
+    const heightCalls = onCustomCropChange.mock.calls.filter(([field]) => field === 'height');
+    const xCalls = onCustomCropChange.mock.calls.filter(([field]) => field === 'x');
+    const yCalls = onCustomCropChange.mock.calls.filter(([field]) => field === 'y');
+
+    expect(widthCalls[widthCalls.length - 1]?.[1]).toBe('50');
+    expect(heightCalls[heightCalls.length - 1]?.[1]).toBe('50');
+    expect(xCalls[xCalls.length - 1]?.[1]).not.toBe('10');
+    expect(yCalls[yCalls.length - 1]?.[1]).not.toBe('20');
+  });
 });

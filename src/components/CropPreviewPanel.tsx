@@ -297,6 +297,10 @@ export default function CropPreviewPanel({
 
         const right = startRect.x + startRect.width;
         const bottom = startRect.y + startRect.height;
+        const adjustsEast = handle === 'e' || handle === 'ne' || handle === 'se';
+        const adjustsSouth = handle === 's' || handle === 'se' || handle === 'sw';
+        const adjustsWest = handle === 'w' || handle === 'nw' || handle === 'sw';
+        const adjustsNorth = handle === 'n' || handle === 'ne' || handle === 'nw';
 
         let nextX = startRect.x;
         let nextY = startRect.y;
@@ -306,24 +310,24 @@ export default function CropPreviewPanel({
         if (handle === 'move') {
           nextX = clamp(startRect.x + dxPercent, 0, 100 - startRect.width);
           nextY = clamp(startRect.y + dyPercent, 0, 100 - startRect.height);
-        }
+        } else {
+          if (adjustsEast) {
+            nextWidth = clamp(startRect.width + dxPercent, MIN_CROP_PERCENT, 100 - nextX);
+          }
 
-        if (handle.includes('e')) {
-          nextWidth = clamp(startRect.width + dxPercent, MIN_CROP_PERCENT, 100 - nextX);
-        }
+          if (adjustsSouth) {
+            nextHeight = clamp(startRect.height + dyPercent, MIN_CROP_PERCENT, 100 - nextY);
+          }
 
-        if (handle.includes('s')) {
-          nextHeight = clamp(startRect.height + dyPercent, MIN_CROP_PERCENT, 100 - nextY);
-        }
+          if (adjustsWest) {
+            nextX = clamp(startRect.x + dxPercent, 0, right - MIN_CROP_PERCENT);
+            nextWidth = clamp(right - nextX, MIN_CROP_PERCENT, 100 - nextX);
+          }
 
-        if (handle.includes('w')) {
-          nextX = clamp(startRect.x + dxPercent, 0, right - MIN_CROP_PERCENT);
-          nextWidth = clamp(right - nextX, MIN_CROP_PERCENT, 100 - nextX);
-        }
-
-        if (handle.includes('n')) {
-          nextY = clamp(startRect.y + dyPercent, 0, bottom - MIN_CROP_PERCENT);
-          nextHeight = clamp(bottom - nextY, MIN_CROP_PERCENT, 100 - nextY);
+          if (adjustsNorth) {
+            nextY = clamp(startRect.y + dyPercent, 0, bottom - MIN_CROP_PERCENT);
+            nextHeight = clamp(bottom - nextY, MIN_CROP_PERCENT, 100 - nextY);
+          }
         }
 
         applyRectToInputs({

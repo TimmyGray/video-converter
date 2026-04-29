@@ -31,3 +31,13 @@
 **Correct behavior:** Keep route segment config exports (`dynamic`, `revalidate`, etc.) as static literals and move environment conditionals into handler logic.
 **Pattern / trigger:** Next App Router route handlers when targeting `output: export` and adjusting segment config for build compatibility.
 **Generalize?:** Yes
+
+### 2026-04-29 — Move handle matched resize branch by substring
+
+**Trigger:** User correction
+**Context:** Crop rectangle dragging in [src/components/CropPreviewPanel.tsx](src/components/CropPreviewPanel.tsx).
+**Wrong action:** Used `handle.includes('e'|'w'|'n'|'s')` checks for resize logic while move handle value was `move`.
+**Root cause:** I treated handle names as safe substring tokens instead of explicit enum-like values, so `move` incorrectly matched the east-resize condition.
+**Correct behavior:** Separate move and resize branches and use explicit handle matching sets (`e/ne/se`, `w/nw/sw`, etc.) for directional resize logic.
+**Pattern / trigger:** Pointer/drag code that uses string handles and branches on substring checks.
+**Generalize?:** Yes
