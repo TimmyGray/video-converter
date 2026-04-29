@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="VideoForge">
+  <defs>
+    <linearGradient id="vf-bg" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFB347"/>
+      <stop offset="1" stop-color="#FF6A00"/>
+    </linearGradient>
+    <linearGradient id="vf-play" x1="24" y1="18" x2="44" y2="46" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#FFE8C2"/>
+    </linearGradient>
+  </defs>
+  <rect x="6" y="6" width="52" height="52" rx="14" fill="url(#vf-bg)"/>
+  <path d="M27 20.5L45 32L27 43.5V20.5Z" fill="url(#vf-play)"/>
+  <circle cx="17" cy="17" r="2" fill="#2A1600" opacity="0.35"/>
+  <circle cx="47" cy="47" r="2" fill="#2A1600" opacity="0.35"/>
+</svg>
