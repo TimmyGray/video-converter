@@ -42,4 +42,19 @@ describe('FormatSelector', () => {
     );
     expect(screen.getByText(/Output Format/i)).toBeInTheDocument();
   });
+
+  it('renders only MP3 when constrained to audio mode formats', () => {
+    render(
+      <FormatSelector
+        selectedFormat="mp3"
+        onFormatChange={mockOnFormatChange}
+        formats={['mp3']}
+      />
+    );
+
+    expect(screen.getByTestId('format-chip-mp3')).toBeInTheDocument();
+    ['mp4', 'avi', 'mov', 'mkv', 'webm', 'gif'].forEach((fmt) => {
+      expect(screen.queryByTestId(`format-chip-${fmt}`)).not.toBeInTheDocument();
+    });
+  });
 });

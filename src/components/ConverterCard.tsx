@@ -1,7 +1,17 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Card, CardContent, Box, Button, Typography, Divider } from '@mui/material';
+import {
+  Card,
+  CardContent,
+  Box,
+  Button,
+  Typography,
+  Divider,
+  ToggleButton,
+  ToggleButtonGroup,
+  Chip,
+} from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
@@ -14,11 +24,13 @@ import ConversionProgress from './ConversionProgress';
 import FileInfoCard from './FileInfoCard';
 import SaveDestinationDialog from './SaveDestinationDialog';
 import { useFileConverter } from '@/hooks/useFileConverter';
+import { getSupportedFormats, isValidVideoFile } from '@/utils/formatUtils';
 
 export default function ConverterCard() {
   const {
     job,
     selectFile,
+    selectConversionMode,
     selectFormat,
     selectCropMode,
     updateCustomCrop,
@@ -28,6 +40,9 @@ export default function ConverterCard() {
 
   const isActive = job.status === 'loading' || job.status === 'converting';
   const isDone = job.status === 'done';
+  const isAudioExtractionMode = job.conversionMode === 'audio-extraction';
+  const formatOptions = getSupportedFormats(job.conversionMode);
+  const hasValidSourceVideo = Boolean(job.file) && isValidVideoFile(job.file);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
 
   const handleReset = () => {
@@ -125,18 +140,74 @@ export default function ConverterCard() {
 
           <Divider sx={{ my: 3, borderColor: 'rgba(255,140,0,0.15)' }} />
 
+          <Box
+            sx={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              gap: 1.25,
+              mb: 2.5,
+            }}
+          >
+            <ToggleButtonGroup
+              size="small"
+              exclusive
+              disabled={isActive}
+              value={job.conversionMode}
+              onChange={(_, mode) => {
+                if (mode) {
+                  selectConversionMode(mode);
+                }
+              }}
+              aria-label="conversion mode"
+              data-testid="conversion-mode-toggle"
+              sx={{
+                '& .MuiToggleButton-root': {
+                  color: 'rgba(255,255,255,0.7)',
+                  borderColor: 'rgba(255,183,77,0.45)',
+                  textTransform: 'none',
+                  fontWeight: 700,
+                },
+                '& .Mui-selected': {
+                  color: '#1A1200',
+                  background: 'linear-gradient(135deg, #FFD54F 0%, #FFB74D 100%)',
+                },
+              }}
+            >
+              <ToggleButton value="video">Video Conversion</ToggleButton>
+              <ToggleButton value="audio-extraction">Audio Extraction Mode</ToggleButton>
+            </ToggleButtonGroup>
+
+            <Chip
+              data-testid="conversion-mode-chip"
+              label={isAudioExtractionMode ? 'Audio Extraction Mode' : 'Video Conversion Mode'}
+              size="small"
+              sx={{
+                fontWeight: 700,
+                color: isAudioExtractionMode ? '#64DD17' : '#FFB74D',
+                border: `1px solid ${isAudioExtractionMode ? 'rgba(100,221,23,0.7)' : 'rgba(255,183,77,0.65)'}`,
+                background: isAudioExtractionMode
+                  ? 'rgba(100,221,23,0.12)'
+                  : 'rgba(255,183,77,0.12)',
+              }}
+            />
+          </Box>
+
           <FormatSelector
             selectedFormat={job.outputFormat}
             onFormatChange={selectFormat}
+            formats={formatOptions}
             disabled={isActive}
           />
 
-          <CropSelector
-            cropSettings={job.cropSettings}
-            onCropModeChange={selectCropMode}
-            onCustomCropChange={updateCustomCrop}
-            disabled={isActive}
-          />
+          {!isAudioExtractionMode && (
+            <CropSelector
+              cropSettings={job.cropSettings}
+              onCropModeChange={selectCropMode}
+              onCustomCropChange={updateCustomCrop}
+              disabled={isActive}
+            />
+          )}
 
           <ConversionProgress status={job.status} progress={job.progress} />
 
@@ -148,7 +219,7 @@ export default function ConverterCard() {
                 size="large"
                 startIcon={<AutoFixHighIcon />}
                 onClick={startConversion}
-                disabled={!job.file || isActive}
+                disabled={!hasValidSourceVideo || isActive}
                 sx={{ flexGrow: 1 }}
               >
                 {isActive ? 'Converting\u2026' : 'Convert'}
@@ -186,13 +257,15 @@ export default function ConverterCard() {
         </CardContent>
       </Card>
 
-      <CropPreviewPanel
-        cropSettings={job.cropSettings}
-        file={job.file}
-        onCropModeChange={selectCropMode}
-        onCustomCropChange={updateCustomCrop}
-        disabled={isActive}
-      />
+      {!isAudioExtractionMode && (
+        <CropPreviewPanel
+          cropSettings={job.cropSettings}
+          file={job.file}
+          onCropModeChange={selectCropMode}
+          onCustomCropChange={updateCustomCrop}
+          disabled={isActive}
+        />
+      )}
 
       <SaveDestinationDialog
         open={isSaveDialogOpen}
