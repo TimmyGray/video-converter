@@ -79,7 +79,19 @@ export function isValidVideoFile(file: File): boolean {
   );
 }
 
-export function getOutputFileName(inputName: string, format: VideoFormat): string {
+export function getOutputFileName(
+  inputName: string,
+  format: VideoFormat,
+  conversionMode: ConversionMode = 'video'
+): string {
   const nameWithoutExt = inputName.replace(/\.[^/.]+$/, '');
+
+  if (conversionMode === 'audio-extraction' && format === 'mp3') {
+    const audioBaseName = nameWithoutExt.endsWith('_audio')
+      ? nameWithoutExt.slice(0, -'_audio'.length)
+      : nameWithoutExt;
+    return `${audioBaseName}_audio.mp3`;
+  }
+
   return `${nameWithoutExt}.${FORMAT_INFO[format].extension}`;
 }

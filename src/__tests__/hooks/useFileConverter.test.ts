@@ -132,11 +132,31 @@ describe('useFileConverter', () => {
     expect(mockTranscode).toHaveBeenCalledWith(
       file,
       'mp3',
+      'audio-extraction',
       result.current.job.cropSettings,
       expect.any(Function)
     );
     expect(result.current.job.status).toBe('done');
     expect(result.current.job.outputFileName).toBe('output.mp3');
+  });
+
+  it('startConversion passes video mode context in regular conversion mode', async () => {
+    const { result } = renderHook(() => useFileConverter());
+    const file = new File([''], 'test.mp4', { type: 'video/mp4' });
+
+    act(() => result.current.selectFile(file));
+
+    await act(async () => {
+      await result.current.startConversion();
+    });
+
+    expect(mockTranscode).toHaveBeenCalledWith(
+      file,
+      'mp4',
+      'video',
+      result.current.job.cropSettings,
+      expect.any(Function)
+    );
   });
 
   it('startConversion does nothing if no file selected', async () => {

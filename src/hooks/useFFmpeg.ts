@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
-import { CropSettings, VideoFormat } from '@/types';
+import { ConversionMode, CropSettings, VideoFormat } from '@/types';
 import { getOutputFileName, getFormatInfo } from '@/utils/formatUtils';
 import { getCommandAttempts } from '@/hooks/ffmpegCommandPlanner';
 
@@ -31,6 +31,7 @@ export interface UseFFmpegReturn {
   transcode: (
     file: File,
     outputFormat: VideoFormat,
+    conversionMode: ConversionMode,
     cropSettings: CropSettings,
     onProgress: (progress: number) => void
   ) => Promise<TranscodeResult>;
@@ -179,6 +180,7 @@ export function useFFmpeg(): UseFFmpegReturn {
     async (
       file: File,
       outputFormat: VideoFormat,
+      conversionMode: ConversionMode,
       cropSettings: CropSettings,
       onProgress: (progress: number) => void
     ): Promise<TranscodeResult> => {
@@ -188,7 +190,7 @@ export function useFFmpeg(): UseFFmpegReturn {
       const extensionIndex = file.name.lastIndexOf('.');
       const inputExtension = extensionIndex >= 0 ? file.name.slice(extensionIndex) : '';
       const inputName = `input${inputExtension}`;
-      const outputFileName = getOutputFileName(file.name, outputFormat);
+      const outputFileName = getOutputFileName(file.name, outputFormat, conversionMode);
 
       const logs: string[] = [];
       const logHandler = ({ message }: { message: string }) => {
