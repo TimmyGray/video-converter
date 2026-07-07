@@ -8,15 +8,17 @@ import { FORMAT_INFO, getSupportedFormats } from '@/utils/formatUtils';
 interface FormatSelectorProps {
   selectedFormat: VideoFormat;
   onFormatChange: (format: VideoFormat) => void;
+  formats?: VideoFormat[];
   disabled?: boolean;
 }
 
 export default function FormatSelector({
   selectedFormat,
   onFormatChange,
+  formats,
   disabled,
 }: FormatSelectorProps) {
-  const formats = getSupportedFormats();
+  const formatOptions = formats ?? getSupportedFormats();
 
   return (
     <Box>
@@ -32,7 +34,7 @@ export default function FormatSelector({
         Output Format
       </Typography>
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-        {formats.map((fmt) => {
+        {formatOptions.map((fmt) => {
           const info = FORMAT_INFO[fmt];
           const isSelected = fmt === selectedFormat;
           return (

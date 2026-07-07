@@ -1,4 +1,6 @@
-export type VideoFormat = 'mp4' | 'avi' | 'mov' | 'mkv' | 'webm' | 'gif';
+export type VideoFormat = 'mp4' | 'avi' | 'mov' | 'mkv' | 'webm' | 'gif' | 'mp3';
+
+export type ConversionMode = 'video' | 'audio-extraction';
 
 export type CropMode = 'none' | '9:16' | '16:9' | '4:3' | '3:4' | 'custom';
 
@@ -21,6 +23,7 @@ export type ConversionStatus =
 
 export interface ConversionJob {
   file: File | null;
+  conversionMode: ConversionMode;
   outputFormat: VideoFormat;
   cropSettings: CropSettings;
   status: ConversionStatus;

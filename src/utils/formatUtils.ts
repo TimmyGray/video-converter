@@ -1,4 +1,4 @@
-import { VideoFormat } from '@/types';
+import { ConversionMode, VideoFormat } from '@/types';
 
 export interface FormatInfo {
   label: string;
@@ -51,10 +51,21 @@ export const FORMAT_INFO: Record<VideoFormat, FormatInfo> = {
     color: '#FF4500',
     description: 'Animated image format',
   },
+  mp3: {
+    label: 'MP3',
+    extension: 'mp3',
+    mimeType: 'audio/mpeg',
+    color: '#64DD17',
+    description: 'Audio extraction format',
+  },
 };
 
-export function getSupportedFormats(): VideoFormat[] {
-  return Object.keys(FORMAT_INFO) as VideoFormat[];
+export function getSupportedFormats(mode: ConversionMode = 'video'): VideoFormat[] {
+  if (mode === 'audio-extraction') {
+    return ['mp3'];
+  }
+
+  return ['mp4', 'avi', 'mov', 'mkv', 'webm', 'gif'];
 }
 
 export function getFormatInfo(format: VideoFormat): FormatInfo {

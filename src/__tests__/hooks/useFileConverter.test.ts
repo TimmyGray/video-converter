@@ -1,28 +1,36 @@
 import { renderHook, act } from '@testing-library/react';
 import { useFileConverter } from '@/hooks/useFileConverter';
 
+const mockLoadFFmpeg = jest.fn().mockResolvedValue(undefined);
+const mockTranscode = jest.fn().mockResolvedValue({
+  url: 'blob:mock',
+  fileName: 'output.mp4',
+  sizeBytes: 2048,
+  ffmpegMode: 'multithreaded',
+  performanceNote: null,
+});
+
 jest.mock('@/hooks/useFFmpeg', () => ({
   useFFmpeg: () => ({
     isLoaded: false,
     isLoading: false,
     loadError: null,
     ffmpegMode: 'multithreaded',
-    loadFFmpeg: jest.fn().mockResolvedValue(undefined),
-    transcode: jest.fn().mockResolvedValue({
-      url: 'blob:mock',
-      fileName: 'output.mp4',
-      sizeBytes: 2048,
-      ffmpegMode: 'multithreaded',
-      performanceNote: null,
-    }),
+    loadFFmpeg: mockLoadFFmpeg,
+    transcode: mockTranscode,
   }),
 }));
 
 describe('useFileConverter', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   it('initialises with default state', () => {
     const { result } = renderHook(() => useFileConverter());
     expect(result.current.job.file).toBeNull();
     expect(result.current.job.status).toBe('idle');
+    expect(result.current.job.conversionMode).toBe('video');
     expect(result.current.job.outputFormat).toBe('mp4');
     expect(result.current.job.cropSettings.mode).toBe('none');
     expect(result.current.job.progress).toBe(0);
@@ -40,6 +48,27 @@ describe('useFileConverter', () => {
   it('selectFormat updates outputFormat', () => {
     const { result } = renderHook(() => useFileConverter());
     act(() => result.current.selectFormat('webm'));
+    expect(result.current.job.outputFormat).toBe('webm');
+  });
+
+  it('switching to audio extraction mode forces MP3 output', () => {
+    const { result } = renderHook(() => useFileConverter());
+
+    act(() => result.current.selectFormat('webm'));
+    act(() => result.current.selectConversionMode('audio-extraction'));
+
+    expect(result.current.job.conversionMode).toBe('audio-extraction');
+    expect(result.current.job.outputFormat).toBe('mp3');
+  });
+
+  it('restores previous video format when switching back from audio extraction mode', () => {
+    const { result } = renderHook(() => useFileConverter());
+
+    act(() => result.current.selectFormat('webm'));
+    act(() => result.current.selectConversionMode('audio-extraction'));
+    act(() => result.current.selectConversionMode('video'));
+
+    expect(result.current.job.conversionMode).toBe('video');
     expect(result.current.job.outputFormat).toBe('webm');
   });
 
@@ -87,5 +116,19 @@ describe('useFileConverter', () => {
       await result.current.startConversion();
     });
     expect(result.current.job.status).toBe('idle');
+  });
+
+  it('startConversion remains blocked for invalid source files', async () => {
+    const { result } = renderHook(() => useFileConverter());
+    const invalidFile = new File(['not-a-video'], 'document.pdf', { type: 'application/pdf' });
+
+    act(() => result.current.selectFile(invalidFile));
+
+    await act(async () => {
+      await result.current.startConversion();
+    });
+
+    expect(result.current.job.status).toBe('idle');
+    expect(mockTranscode).not.toHaveBeenCalled();
   });
 });

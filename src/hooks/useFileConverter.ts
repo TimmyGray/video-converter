@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useCallback } from 'react';
-import { ConversionJob, CropMode, VideoFormat } from '@/types';
+import { useState, useRef, useCallback } from 'react';
+import { ConversionJob, ConversionMode, CropMode, VideoFormat } from '@/types';
 import { useFFmpeg } from '@/hooks/useFFmpeg';
+import { isValidVideoFile } from '@/utils/formatUtils';
 
 export interface UseFileConverterReturn {
   job: ConversionJob;
@@ -10,6 +11,7 @@ export interface UseFileConverterReturn {
   isFFmpegLoading: boolean;
   ffmpegLoadError: string | null;
   selectFile: (file: File) => void;
+  selectConversionMode: (mode: ConversionMode) => void;
   selectFormat: (format: VideoFormat) => void;
   selectCropMode: (mode: CropMode) => void;
   updateCustomCrop: (field: 'width' | 'height' | 'x' | 'y', value: string) => void;
@@ -19,6 +21,7 @@ export interface UseFileConverterReturn {
 
 const initialJob: ConversionJob = {
   file: null,
+  conversionMode: 'video',
   outputFormat: 'mp4',
   cropSettings: {
     mode: 'none',
@@ -42,11 +45,13 @@ const initialJob: ConversionJob = {
 
 export function useFileConverter(): UseFileConverterReturn {
   const [job, setJob] = useState<ConversionJob>(initialJob);
+  const lastVideoFormatRef = useRef<Exclude<VideoFormat, 'mp3'>>('mp4');
   const { isLoaded, isLoading, loadError, ffmpegMode, loadFFmpeg, transcode } = useFFmpeg();
 
   const selectFile = useCallback((file: File) => {
     setJob((prev) => ({
       ...initialJob,
+      conversionMode: prev.conversionMode,
       outputFormat: prev.outputFormat,
       cropSettings: prev.cropSettings,
       ffmpegMode: prev.ffmpegMode,
@@ -54,8 +59,42 @@ export function useFileConverter(): UseFileConverterReturn {
     }));
   }, []);
 
+  const selectConversionMode = useCallback((mode: ConversionMode) => {
+    setJob((prev) => {
+      if (mode === prev.conversionMode) return prev;
+
+      if (mode === 'audio-extraction') {
+        if (prev.outputFormat !== 'mp3') {
+          lastVideoFormatRef.current = prev.outputFormat as Exclude<VideoFormat, 'mp3'>;
+        }
+
+        return {
+          ...prev,
+          conversionMode: mode,
+          outputFormat: 'mp3',
+        };
+      }
+
+      return {
+        ...prev,
+        conversionMode: mode,
+        outputFormat: prev.outputFormat === 'mp3' ? lastVideoFormatRef.current : prev.outputFormat,
+      };
+    });
+  }, []);
+
   const selectFormat = useCallback((format: VideoFormat) => {
-    setJob((prev) => ({ ...prev, outputFormat: format }));
+    setJob((prev) => {
+      if (prev.conversionMode === 'audio-extraction' && format !== 'mp3') {
+        return prev;
+      }
+
+      if (format !== 'mp3') {
+        lastVideoFormatRef.current = format as Exclude<VideoFormat, 'mp3'>;
+      }
+
+      return { ...prev, outputFormat: format };
+    });
   }, []);
 
   const selectCropMode = useCallback((mode: CropMode) => {
@@ -82,7 +121,7 @@ export function useFileConverter(): UseFileConverterReturn {
   }, []);
 
   const startConversion = useCallback(async () => {
-    if (!job.file) return;
+    if (!job.file || !isValidVideoFile(job.file)) return;
 
     setJob((prev) => ({
       ...prev,
@@ -144,6 +183,7 @@ export function useFileConverter(): UseFileConverterReturn {
 
   const reset = useCallback(() => {
     if (job.outputUrl) URL.revokeObjectURL(job.outputUrl);
+    lastVideoFormatRef.current = 'mp4';
     setJob(initialJob);
   }, [job.outputUrl]);
 
@@ -153,6 +193,7 @@ export function useFileConverter(): UseFileConverterReturn {
     isFFmpegLoading: isLoading,
     ffmpegLoadError: loadError,
     selectFile,
+    selectConversionMode,
     selectFormat,
     selectCropMode,
     updateCustomCrop,
