@@ -5,6 +5,7 @@ import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import { CropSettings, VideoFormat } from '@/types';
 import { getOutputFileName, getFormatInfo } from '@/utils/formatUtils';
+import { getCommandAttempts } from '@/hooks/ffmpegCommandPlanner';
 
 const LOCAL_MT_BASE_URL = '/ffmpeg-core-mt';
 const LOCAL_ST_BASE_URL = '/ffmpeg-core';
@@ -78,55 +79,6 @@ function getCropFilter(cropSettings: CropSettings): string | null {
 
   // Center crop to selected aspect ratio.
   return `crop='if(gte(iw/ih,${ratio}),ih*${ratio},iw):if(gte(iw/ih,${ratio}),ih,iw/${ratio}):if(gte(iw/ih,${ratio}),(iw-ih*${ratio})/2,0):if(gte(iw/ih,${ratio}),0,(ih-iw/${ratio})/2)'`;
-}
-
-function getCommandAttempts(
-  inputName: string,
-  inputFileName: string,
-  outputFormat: VideoFormat,
-  outputFileName: string,
-  cropFilter: string | null
-): string[][] {
-  const filterArgs = cropFilter ? ['-vf', cropFilter] : [];
-
-  if (outputFormat === 'webm') {
-    const isWebmInput = /\.webm$/i.test(inputFileName);
-
-    return [
-      ...(isWebmInput && !cropFilter ? [['-i', inputName, '-c', 'copy', outputFileName]] : []),
-      // Fast WebM profile tuned for WASM encoding speed.
-      [
-        '-i',
-        inputName,
-        ...filterArgs,
-        '-c:v',
-        'libvpx',
-        '-deadline',
-        'realtime',
-        '-cpu-used',
-        '8',
-        '-crf',
-        '36',
-        '-b:v',
-        '0',
-        '-threads',
-        '4',
-        '-c:a',
-        'libvorbis',
-        '-q:a',
-        '5',
-        outputFileName,
-      ],
-      // Fallback profile if speed-tuned args are unsupported.
-      ['-i', inputName, ...filterArgs, '-c:v', 'libvpx', '-c:a', 'libvorbis', outputFileName],
-      ['-i', inputName, ...filterArgs, outputFileName],
-    ];
-  }
-
-  return [
-    ['-i', inputName, ...filterArgs, '-preset', 'ultrafast', outputFileName],
-    ['-i', inputName, ...filterArgs, outputFileName],
-  ];
 }
 
 function getWebmPerformanceNote(outputFormat: VideoFormat, ffmpegMode: FFmpegMode | null): string | null {

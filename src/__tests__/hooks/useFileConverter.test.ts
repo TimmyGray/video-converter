@@ -110,6 +110,35 @@ describe('useFileConverter', () => {
     expect(result.current.job.conversionDurationMs).toBeGreaterThan(0);
   });
 
+  it('startConversion uses MP3 output in audio extraction mode', async () => {
+    mockTranscode.mockResolvedValueOnce({
+      url: 'blob:mp3',
+      fileName: 'output.mp3',
+      sizeBytes: 1024,
+      ffmpegMode: 'multithreaded',
+      performanceNote: null,
+    });
+
+    const { result } = renderHook(() => useFileConverter());
+    const file = new File([''], 'test.mp4', { type: 'video/mp4' });
+
+    act(() => result.current.selectFile(file));
+    act(() => result.current.selectConversionMode('audio-extraction'));
+
+    await act(async () => {
+      await result.current.startConversion();
+    });
+
+    expect(mockTranscode).toHaveBeenCalledWith(
+      file,
+      'mp3',
+      result.current.job.cropSettings,
+      expect.any(Function)
+    );
+    expect(result.current.job.status).toBe('done');
+    expect(result.current.job.outputFileName).toBe('output.mp3');
+  });
+
   it('startConversion does nothing if no file selected', async () => {
     const { result } = renderHook(() => useFileConverter());
     await act(async () => {
