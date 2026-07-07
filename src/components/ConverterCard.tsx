@@ -42,7 +42,7 @@ export default function ConverterCard() {
   const isDone = job.status === 'done';
   const isAudioExtractionMode = job.conversionMode === 'audio-extraction';
   const formatOptions = getSupportedFormats(job.conversionMode);
-  const hasValidSourceVideo = Boolean(job.file) && isValidVideoFile(job.file);
+  const hasValidSourceVideo = job.file !== null && isValidVideoFile(job.file);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
 
   const handleReset = () => {
