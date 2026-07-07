@@ -180,7 +180,7 @@ export function useFileConverter(): UseFileConverterReturn {
       }
       setJob((prev) => ({ ...prev, status: 'error', errorMessage: message }));
     }
-  }, [job.file, job.outputFormat, job.cropSettings, isLoaded, ffmpegMode, loadFFmpeg, transcode]);
+  }, [job.file, job.outputFormat, job.conversionMode, job.cropSettings, isLoaded, ffmpegMode, loadFFmpeg, transcode]);
 
   const reset = useCallback(() => {
     if (job.outputUrl) URL.revokeObjectURL(job.outputUrl);
