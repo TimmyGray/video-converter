@@ -12,6 +12,11 @@ describe('getSupportedFormats', () => {
     expect(formats).toHaveLength(6);
     expect(formats).toContain('mp4');
     expect(formats).toContain('gif');
+    expect(formats).not.toContain('mp3');
+  });
+
+  it('returns MP3 only for audio extraction mode', () => {
+    expect(getSupportedFormats('audio-extraction')).toEqual(['mp3']);
   });
 });
 
@@ -27,6 +32,13 @@ describe('getFormatInfo', () => {
     const info = getFormatInfo('gif');
     expect(info.label).toBe('GIF');
     expect(info.mimeType).toBe('image/gif');
+  });
+
+  it('returns correct info for mp3', () => {
+    const info = getFormatInfo('mp3');
+    expect(info.label).toBe('MP3');
+    expect(info.extension).toBe('mp3');
+    expect(info.mimeType).toBe('audio/mpeg');
   });
 });
 
@@ -61,6 +73,10 @@ describe('getOutputFileName', () => {
 
   it('handles multi-dot filenames', () => {
     expect(getOutputFileName('my.video.file.mov', 'webm')).toBe('my.video.file.webm');
+  });
+
+  it('returns mp3 output extension for audio format', () => {
+    expect(getOutputFileName('my.video.file.mov', 'mp3')).toBe('my.video.file.mp3');
   });
 });
 
