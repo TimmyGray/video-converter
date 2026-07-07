@@ -78,6 +78,26 @@ describe('getOutputFileName', () => {
   it('returns mp3 output extension for audio format', () => {
     expect(getOutputFileName('my.video.file.mov', 'mp3')).toBe('my.video.file.mp3');
   });
+
+  it('applies _audio.mp3 suffix in audio extraction mode', () => {
+    expect(getOutputFileName('demo.mov', 'mp3', 'audio-extraction')).toBe('demo_audio.mp3');
+  });
+
+  it('applies _audio.mp3 suffix when source has no extension', () => {
+    expect(getOutputFileName('demo', 'mp3', 'audio-extraction')).toBe('demo_audio.mp3');
+  });
+
+  it('keeps multi-dot names with _audio.mp3 suffix in audio extraction mode', () => {
+    expect(getOutputFileName('demo.audio.mov', 'mp3', 'audio-extraction')).toBe('demo.audio_audio.mp3');
+  });
+
+  it('normalizes pre-normalized MP3 names without duplicate extension', () => {
+    expect(getOutputFileName('demo.mp3', 'mp3', 'audio-extraction')).toBe('demo_audio.mp3');
+  });
+
+  it('does not duplicate _audio suffix for already normalized names', () => {
+    expect(getOutputFileName('demo_audio.mp3', 'mp3', 'audio-extraction')).toBe('demo_audio.mp3');
+  });
 });
 
 describe('FORMAT_INFO completeness', () => {

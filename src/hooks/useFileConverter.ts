@@ -146,6 +146,7 @@ export function useFileConverter(): UseFileConverterReturn {
       const { url, fileName, sizeBytes, ffmpegMode: usedMode, performanceNote } = await transcode(
         job.file,
         job.outputFormat,
+        job.conversionMode,
         job.cropSettings,
         (progress: number) => setJob((prev) => ({ ...prev, progress }))
       );
