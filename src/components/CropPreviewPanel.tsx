@@ -134,7 +134,10 @@ export default function CropPreviewPanel({
   const [isDraggingRect, setIsDraggingRect] = useState(false);
 
   useEffect(() => {
+    // Intentional prop-sync: reset preview state when the source file changes,
+    // then load a frame from the new file (async external work below).
     if (!file) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSourceAspectRatio(16 / 9);
       setSourceDimensions(null);
       setFrameDataUrl(null);

@@ -172,4 +172,37 @@ describe('ConverterCard', () => {
 
     expect(screen.getByRole('button', { name: /^convert$/i })).toBeDisabled();
   });
+
+  // Regression (Story 1.5): audio-mode constraints must not leak into video mode.
+  describe('video mode regression safety', () => {
+    it('offers all six non-audio formats and keeps crop controls in video mode', () => {
+      mockConverterState(createJob({ conversionMode: 'video', outputFormat: 'mp4' }));
+
+      render(<ConverterCard />);
+
+      expect(screen.getByTestId('conversion-mode-chip')).toHaveTextContent('Video Conversion Mode');
+
+      const formatSelector = screen.getByTestId('format-selector-mock');
+      ['mp4', 'avi', 'mov', 'mkv', 'webm', 'gif'].forEach((fmt) => {
+        expect(formatSelector).toHaveTextContent(fmt);
+      });
+      expect(formatSelector).not.toHaveTextContent('mp3');
+
+      // Crop is a video-only capability and must remain available in video mode.
+      expect(screen.getByTestId('crop-selector-mock')).toBeInTheDocument();
+      expect(screen.getByTestId('crop-preview-panel-mock')).toBeInTheDocument();
+    });
+
+    it('enables convert for a valid source video in video mode', () => {
+      const validSource = new File(['data'], 'holiday.mp4', { type: 'video/mp4' });
+
+      mockConverterState(
+        createJob({ conversionMode: 'video', outputFormat: 'mp4', file: validSource })
+      );
+
+      render(<ConverterCard />);
+
+      expect(screen.getByRole('button', { name: /^convert$/i })).toBeEnabled();
+    });
+  });
 });

@@ -72,6 +72,39 @@ describe('useFileConverter', () => {
     expect(result.current.job.outputFormat).toBe('webm');
   });
 
+  // Regression (Story 1.5): the mp3-only constraint must apply only in audio mode.
+  it('accepts every non-audio format in video mode', () => {
+    const { result } = renderHook(() => useFileConverter());
+
+    (['mp4', 'avi', 'mov', 'mkv', 'webm', 'gif'] as const).forEach((format) => {
+      act(() => result.current.selectFormat(format));
+      expect(result.current.job.outputFormat).toBe(format);
+    });
+  });
+
+  it('rejects non-mp3 format selection while in audio extraction mode', () => {
+    const { result } = renderHook(() => useFileConverter());
+
+    act(() => result.current.selectConversionMode('audio-extraction'));
+    act(() => result.current.selectFormat('mp4'));
+
+    // Audio-mode constraint stays contained: output remains mp3.
+    expect(result.current.job.outputFormat).toBe('mp3');
+  });
+
+  it('preserves crop settings across an audio round-trip so video mode is unaffected', () => {
+    const { result } = renderHook(() => useFileConverter());
+
+    act(() => result.current.selectCropMode('16:9'));
+    act(() => result.current.updateCustomCrop('width', '1920'));
+
+    act(() => result.current.selectConversionMode('audio-extraction'));
+    act(() => result.current.selectConversionMode('video'));
+
+    expect(result.current.job.cropSettings.mode).toBe('16:9');
+    expect(result.current.job.cropSettings.custom.width).toBe('1920');
+  });
+
   it('selectCropMode updates crop mode', () => {
     const { result } = renderHook(() => useFileConverter());
     act(() => result.current.selectCropMode('16:9'));

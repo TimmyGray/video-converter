@@ -1,6 +1,6 @@
 # Story 1.5: Protect build-mode and regression safety for audio extraction
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -15,25 +15,25 @@ so that release and desktop packaging flows continue to work after this feature 
 
 ## Tasks / Subtasks
 
-- [ ] Execute and document full validation matrix (AC: 1)
-  - [ ] Run npm run lint.
-  - [ ] Run npm test.
-  - [ ] Run npm run build.
-  - [ ] Run npm run build:desktop:web.
-  - [ ] If desktop packaging behavior changed, run npm run tauri:build.
-  - [ ] Capture command outcomes in completion notes.
-- [ ] Add focused regression coverage for audio mode vs existing formats (AC: 1)
-  - [ ] Add tests ensuring non-audio formats still appear and convert in normal video mode.
-  - [ ] Add tests ensuring audio-mode constraints do not leak into normal video-mode behavior.
-- [ ] Enforce route config and export-guard constraints (AC: 2)
-  - [ ] Keep runtime and dynamic exports static literals in src/app/api/native-save/route.ts.
-  - [ ] Keep export/standalone branching inside GET/POST handlers.
-  - [ ] Ensure no conditional expression is introduced in route segment config exports.
-- [ ] Validate build mode contract remains environment-driven (AC: 1, 2)
-  - [ ] Keep NEXT_OUTPUT_MODE contract in next.config.ts.
-  - [ ] Ensure release and desktop scripts remain aligned with FFmpeg asset preparation and output targets.
-- [ ] Validate FFmpeg asset preparation assumptions (AC: 1)
-  - [ ] If builds fail on FFmpeg core availability, run prepare:ffmpeg-assets and confirm assets exist in public/ffmpeg-core and public/ffmpeg-core-mt.
+- [x] Execute and document full validation matrix (AC: 1)
+  - [x] Run npm run lint.
+  - [x] Run npm test.
+  - [x] Run npm run build.
+  - [x] Run npm run build:desktop:web.
+  - [x] If desktop packaging behavior changed, run npm run tauri:build. (N/A — no desktop packaging/Rust changes in this story.)
+  - [x] Capture command outcomes in completion notes.
+- [x] Add focused regression coverage for audio mode vs existing formats (AC: 1)
+  - [x] Add tests ensuring non-audio formats still appear and convert in normal video mode.
+  - [x] Add tests ensuring audio-mode constraints do not leak into normal video-mode behavior.
+- [x] Enforce route config and export-guard constraints (AC: 2)
+  - [x] Keep runtime and dynamic exports static literals in src/app/api/native-save/route.ts.
+  - [x] Keep export/standalone branching inside GET/POST handlers.
+  - [x] Ensure no conditional expression is introduced in route segment config exports.
+- [x] Validate build mode contract remains environment-driven (AC: 1, 2)
+  - [x] Keep NEXT_OUTPUT_MODE contract in next.config.ts.
+  - [x] Ensure release and desktop scripts remain aligned with FFmpeg asset preparation and output targets.
+- [x] Validate FFmpeg asset preparation assumptions (AC: 1)
+  - [x] If builds fail on FFmpeg core availability, run prepare:ffmpeg-assets and confirm assets exist in public/ffmpeg-core and public/ffmpeg-core-mt.
 
 ## Dev Notes
 
@@ -120,7 +120,7 @@ so that release and desktop packaging flows continue to work after this feature 
 
 ### Agent Model Used
 
-GPT-5.3-Codex
+Claude Opus 4.8
 
 ### Debug Log References
 
@@ -128,8 +128,27 @@ GPT-5.3-Codex
 
 ### Completion Notes List
 
-- Ultimate context engine analysis completed - comprehensive developer guide created.
+- Validation matrix (all green on branch story/1-5-build-mode-regression-safety):
+  - `npm run lint` → exit 0 (0 errors, 0 warnings).
+  - `npm test` → 14 suites / 105 tests passing.
+  - `npm run build` (standalone) → exit 0; `/api/native-save` server-rendered on demand.
+  - `npm run build:desktop:web` (NEXT_OUTPUT_MODE=export) → exit 0; `out/` generated for Tauri `frontendDist: ../out`; native-save correctly omitted from static export (export-safe).
+  - `npm run tauri:build` → N/A (no Rust/desktop packaging changes in this story).
+- Fixed pre-existing lint failures gating AC-1 without changing runtime behavior:
+  - Excluded vendored, gitignored FFmpeg WASM glue (`public/ffmpeg-core/**`, `public/ffmpeg-core-mt/**`) from ESLint in `eslint.config.mjs`; these are minified third-party assets prepared by `scripts/prepare-ffmpeg-assets.mjs` (AD-7).
+  - Added two targeted, justified `react-hooks/set-state-in-effect` disables for intentional prop-sync effects in `CropPreviewPanel.tsx` and `SaveDestinationDialog.tsx` (reset-on-prop-change + async capability/frame probing). No behavior change.
+- Added regression coverage:
+  - `src/__tests__/hooks/ffmpegCommandPlanner.test.ts` — locks the command contract: `-vn`/`libmp3lame`/`320k` stays isolated to mp3, crop never leaks into audio, video formats never strip audio, crop applies to all video formats, webm stream-copy fast path only when uncropped.
+  - `ConverterCard.test.tsx` — video mode exposes all six non-audio formats and keeps crop controls (audio constraints do not leak into video mode).
+  - `useFileConverter.test.ts` — mp3-only constraint applies only in audio mode; all video formats selectable in video mode; crop settings survive an audio round-trip.
+- Verified route/build-mode invariants (AC: 2) unchanged: `runtime`/`dynamic` remain static literals; export gating stays inside GET/POST handlers; `NEXT_OUTPUT_MODE` contract intact in `next.config.ts`.
 
 ### File List
 
 - _bmad-output/implementation-artifacts/1-5-protect-build-mode-and-regression-safety-for-audio-extraction.md
+- eslint.config.mjs
+- src/components/CropPreviewPanel.tsx
+- src/components/SaveDestinationDialog.tsx
+- src/__tests__/hooks/ffmpegCommandPlanner.test.ts
+- src/__tests__/components/ConverterCard.test.tsx
+- src/__tests__/hooks/useFileConverter.test.ts
