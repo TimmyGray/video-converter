@@ -198,6 +198,9 @@ export default function SaveDestinationDialog({
     if (!open) return;
     let cancelled = false;
 
+    // Intentional prop-sync: reset dialog state each time it opens, then probe
+    // runtime save capabilities (async external work below).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTargetFileName(outputFileName ?? 'converted');
     setSaveError(null);
     setBrowserPickerAvailable(false);
