@@ -1,6 +1,6 @@
 # Story 1.4: Preserve multi-runtime save behavior for MP3 output
 
-Status: ready-for-dev
+Status: ready-for-review
 
 ## Story
 
@@ -16,23 +16,23 @@ so that I can reliably keep the converted file regardless of where I run the app
 
 ## Tasks / Subtasks
 
-- [ ] Preserve capability matrix and CTA enablement logic (AC: 1, 2, 3)
-  - [ ] Confirm pickerAvailable logic remains true when any path exists (browser picker OR tauri OR native server route).
-  - [ ] Ensure Choose Destination is disabled only when all supported paths are unavailable.
-- [ ] Validate browser picker save flow for MP3 output (AC: 1)
-  - [ ] Ensure showSaveFilePicker path writes audio blob successfully with stable error and cancel handling.
-  - [ ] Ensure File System Access permission flow remains robust.
-- [ ] Validate Tauri native save flow for MP3 output (AC: 2)
-  - [ ] Keep save_file_with_dialog invocation and base64 payload conversion unchanged except for MP3 naming/mime updates.
-  - [ ] Confirm cancellation does not throw user-visible crash.
-- [ ] Validate Node route fallback save path for MP3 output (AC: 3)
-  - [ ] Keep GET capability check and POST save behavior in /api/native-save route.
-  - [ ] Ensure output export gating remains handler-level and route config exports remain static literals.
-  - [ ] Ensure server path remains available in standalone mode and unavailable in export mode by capability response.
-- [ ] Add missing SaveDestinationDialog test coverage (AC: 1, 2, 3)
-  - [ ] Add new component test file for runtime-path gating and choose destination enablement.
-  - [ ] Add tests for each path selection branch (browser picker, tauri, native server fallback).
-  - [ ] Add tests for cancellation and error handling without crash regressions.
+- [x] Preserve capability matrix and CTA enablement logic (AC: 1, 2, 3)
+  - [x] Confirm pickerAvailable logic remains true when any path exists (browser picker OR tauri OR native server route).
+  - [x] Ensure Choose Destination is disabled only when all supported paths are unavailable.
+- [x] Validate browser picker save flow for MP3 output (AC: 1)
+  - [x] Ensure showSaveFilePicker path writes audio blob successfully with stable error and cancel handling.
+  - [x] Ensure File System Access permission flow remains robust.
+- [x] Validate Tauri native save flow for MP3 output (AC: 2)
+  - [x] Keep save_file_with_dialog invocation and base64 payload conversion unchanged except for MP3 naming/mime updates.
+  - [x] Confirm cancellation does not throw user-visible crash.
+- [x] Validate Node route fallback save path for MP3 output (AC: 3)
+  - [x] Keep GET capability check and POST save behavior in /api/native-save route.
+  - [x] Ensure output export gating remains handler-level and route config exports remain static literals.
+  - [x] Ensure server path remains available in standalone mode and unavailable in export mode by capability response.
+- [x] Add missing SaveDestinationDialog test coverage (AC: 1, 2, 3)
+  - [x] Add new component test file for runtime-path gating and choose destination enablement.
+  - [x] Add tests for each path selection branch (browser picker, tauri, native server fallback).
+  - [x] Add tests for cancellation and error handling without crash regressions.
 
 ## Dev Notes
 
@@ -115,12 +115,16 @@ GPT-5.3-Codex
 
 ### Debug Log References
 
-- N/A
+- npm test -- SaveDestinationDialog.test.tsx
 
 ### Completion Notes List
 
-- Ultimate context engine analysis completed - comprehensive developer guide created.
+- Added DS 1.4 SaveDestinationDialog test coverage for runtime-path capability matrix (browser picker, Tauri runtime, native server fallback, all-unavailable case).
+- Added save-branch behavior tests for browser picker, Tauri invoke bridge, and native server POST flow.
+- Added cancellation and permission/error handling tests to prevent crash regressions.
+- Verified route/runtime invariants remain compliant (static route config literal, export-mode gating in handler logic).
 
 ### File List
 
 - _bmad-output/implementation-artifacts/1-4-preserve-multi-runtime-save-behavior-for-mp3-output.md
+- src/__tests__/components/SaveDestinationDialog.test.tsx
