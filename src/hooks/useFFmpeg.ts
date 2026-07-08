@@ -5,7 +5,7 @@ import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import { ConversionMode, CropSettings, VideoFormat } from '@/types';
 import { getOutputFileName, getFormatInfo } from '@/utils/formatUtils';
-import { getCommandAttempts } from '@/hooks/ffmpegCommandPlanner';
+import { getCommandAttempts, getWavNormalizeCommand } from '@/hooks/ffmpegCommandPlanner';
 
 const LOCAL_MT_BASE_URL = '/ffmpeg-core-mt';
 const LOCAL_ST_BASE_URL = '/ffmpeg-core';
@@ -35,6 +35,7 @@ export interface UseFFmpegReturn {
     cropSettings: CropSettings,
     onProgress: (progress: number) => void
   ) => Promise<TranscodeResult>;
+  extractPcmWav: (file: File, onProgress: (progress: number) => void) => Promise<Blob>;
 }
 
 function getCropFilter(cropSettings: CropSettings): string | null {
@@ -255,5 +256,57 @@ export function useFFmpeg(): UseFFmpegReturn {
     []
   );
 
-  return { isLoaded, isLoading, loadError, ffmpegMode, loadFFmpeg, transcode };
+  const extractPcmWav = useCallback(
+    async (file: File, onProgress: (progress: number) => void): Promise<Blob> => {
+      const ffmpeg = ffmpegRef.current;
+      if (!ffmpeg) throw new Error('FFmpeg not loaded');
+
+      const extensionIndex = file.name.lastIndexOf('.');
+      const inputExtension = extensionIndex >= 0 ? file.name.slice(extensionIndex) : '';
+      const inputName = `input${inputExtension}`;
+      const outputName = 'transcription-audio.wav';
+
+      const logs: string[] = [];
+      const logHandler = ({ message }: { message: string }) => {
+        logs.push(message);
+      };
+      ffmpeg.on('log', logHandler);
+
+      const progressHandler = ({ progress }: { progress: number }) => {
+        onProgress(Math.round(Math.min(progress * 100, 100)));
+      };
+      ffmpeg.on('progress', progressHandler);
+
+      try {
+        await ffmpeg.writeFile(inputName, await fetchFile(file));
+
+        const exitCode = await ffmpeg.exec(getWavNormalizeCommand(inputName, outputName));
+        if (exitCode !== 0) {
+          const relevant = logs
+            .filter((line) => /error|invalid|unknown|no such|unsupported|codec/i.test(line))
+            .slice(-8);
+          const detail = (relevant.length > 0 ? relevant : logs.slice(-8)).join('\n');
+          throw new Error(`Failed to extract audio for transcription. ${detail || 'No details available.'}`);
+        }
+
+        const data = await ffmpeg.readFile(outputName);
+        const blob = new Blob([data as unknown as ArrayBuffer], { type: 'audio/wav' });
+
+        await ffmpeg.deleteFile(inputName).catch(() => {});
+        await ffmpeg.deleteFile(outputName).catch(() => {});
+
+        return blob;
+      } catch (err) {
+        await ffmpeg.deleteFile(inputName).catch(() => {});
+        await ffmpeg.deleteFile(outputName).catch(() => {});
+        throw err;
+      } finally {
+        ffmpeg.off('log', logHandler);
+        ffmpeg.off('progress', progressHandler);
+      }
+    },
+    []
+  );
+
+  return { isLoaded, isLoading, loadError, ffmpegMode, loadFFmpeg, transcode, extractPcmWav };
 }

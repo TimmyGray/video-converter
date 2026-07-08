@@ -18,6 +18,10 @@ describe('getSupportedFormats', () => {
   it('returns MP3 only for audio extraction mode', () => {
     expect(getSupportedFormats('audio-extraction')).toEqual(['mp3']);
   });
+
+  it('returns txt/srt/vtt for transcription mode', () => {
+    expect(getSupportedFormats('transcription')).toEqual(['txt', 'srt', 'vtt']);
+  });
 });
 
 describe('getFormatInfo', () => {
@@ -77,6 +81,12 @@ describe('getOutputFileName', () => {
 
   it('returns mp3 output extension for audio format', () => {
     expect(getOutputFileName('my.video.file.mov', 'mp3')).toBe('my.video.file.mp3');
+  });
+
+  it('swaps extension to transcript formats in transcription mode', () => {
+    expect(getOutputFileName('demo.mov', 'txt', 'transcription')).toBe('demo.txt');
+    expect(getOutputFileName('demo.mov', 'srt', 'transcription')).toBe('demo.srt');
+    expect(getOutputFileName('demo.mov', 'vtt', 'transcription')).toBe('demo.vtt');
   });
 
   it('applies _audio.mp3 suffix in audio extraction mode', () => {

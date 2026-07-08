@@ -24,6 +24,7 @@
     "@ffmpeg/core-mt": "0.12.6",
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
+    "@huggingface/transformers": "^4.2.0",
     "@mui/icons-material": "^9.0.0",
     "@mui/material": "^9.0.0",
     "@mui/material-nextjs": "^9.0.0",

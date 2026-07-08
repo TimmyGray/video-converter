@@ -1,5 +1,14 @@
 import { VideoFormat } from '@/types';
 
+/**
+ * Deterministic command to normalize any input to a 16 kHz mono PCM WAV, the
+ * waveform format Whisper transcription expects. Kept separate from
+ * getCommandAttempts so the video/audio command contract stays isolated.
+ */
+export function getWavNormalizeCommand(inputName: string, outputName: string): string[] {
+  return ['-i', inputName, '-vn', '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', outputName];
+}
+
 export function getCommandAttempts(
   inputName: string,
   inputFileName: string,

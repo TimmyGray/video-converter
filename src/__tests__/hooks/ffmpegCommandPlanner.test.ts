@@ -1,4 +1,4 @@
-import { getCommandAttempts } from '@/hooks/ffmpegCommandPlanner';
+import { getCommandAttempts, getWavNormalizeCommand } from '@/hooks/ffmpegCommandPlanner';
 import { VideoFormat } from '@/types';
 
 const VIDEO_FORMATS: VideoFormat[] = ['mp4', 'avi', 'mov', 'mkv', 'webm', 'gif'];
@@ -64,5 +64,13 @@ describe('getCommandAttempts - video formats do not inherit audio constraints', 
         expect(attempt[attempt.length - 1]).toBe(outputName);
       });
     });
+  });
+});
+
+describe('getWavNormalizeCommand - transcription audio', () => {
+  it('normalizes to 16 kHz mono pcm_s16le WAV with no video stream', () => {
+    expect(getWavNormalizeCommand('input.mov', 'audio.wav')).toEqual([
+      '-i', 'input.mov', '-vn', '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', 'audio.wav',
+    ]);
   });
 });

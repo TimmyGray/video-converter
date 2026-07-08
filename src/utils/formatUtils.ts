@@ -58,11 +58,36 @@ export const FORMAT_INFO: Record<VideoFormat, FormatInfo> = {
     color: '#64DD17',
     description: 'Audio extraction format',
   },
+  txt: {
+    label: 'TXT',
+    extension: 'txt',
+    mimeType: 'text/plain',
+    color: '#4FC3F7',
+    description: 'Plain text transcript',
+  },
+  srt: {
+    label: 'SRT',
+    extension: 'srt',
+    mimeType: 'application/x-subrip',
+    color: '#4DD0E1',
+    description: 'SubRip subtitle file',
+  },
+  vtt: {
+    label: 'VTT',
+    extension: 'vtt',
+    mimeType: 'text/vtt',
+    color: '#4DB6AC',
+    description: 'WebVTT subtitle file',
+  },
 };
 
 export function getSupportedFormats(mode: ConversionMode = 'video'): VideoFormat[] {
   if (mode === 'audio-extraction') {
     return ['mp3'];
+  }
+
+  if (mode === 'transcription') {
+    return ['txt', 'srt', 'vtt'];
   }
 
   return ['mp4', 'avi', 'mov', 'mkv', 'webm', 'gif'];

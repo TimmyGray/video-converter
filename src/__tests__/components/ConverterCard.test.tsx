@@ -10,6 +10,8 @@ const mockSelectFormat = jest.fn();
 const mockSelectCropMode = jest.fn();
 const mockUpdateCustomCrop = jest.fn();
 const mockSelectConversionMode = jest.fn();
+const mockSelectTranscriptionLanguage = jest.fn();
+const mockSetTranscriptionTranslate = jest.fn();
 const mockStartConversion = jest.fn();
 const mockReset = jest.fn();
 
@@ -82,6 +84,10 @@ function createJob(overrides: Partial<ConversionJob> = {}): ConversionJob {
     ffmpegMode: null,
     performanceNote: null,
     errorMessage: null,
+    transcriptionLanguage: null,
+    transcriptionTranslate: false,
+    transcriptText: null,
+    transcriptChunks: null,
     ...overrides,
   };
 }
@@ -97,6 +103,8 @@ function mockConverterState(job: ConversionJob) {
     selectCropMode: mockSelectCropMode,
     updateCustomCrop: mockUpdateCustomCrop,
     selectConversionMode: mockSelectConversionMode,
+    selectTranscriptionLanguage: mockSelectTranscriptionLanguage,
+    setTranscriptionTranslate: mockSetTranscriptionTranslate,
     startConversion: mockStartConversion,
     reset: mockReset,
   });
@@ -203,6 +211,64 @@ describe('ConverterCard', () => {
       render(<ConverterCard />);
 
       expect(screen.getByRole('button', { name: /^convert$/i })).toBeEnabled();
+    });
+  });
+
+  describe('transcription mode', () => {
+    it('dispatches a transcription mode change from the toggle', () => {
+      mockConverterState(createJob());
+
+      render(<ConverterCard />);
+
+      fireEvent.click(screen.getByRole('button', { name: /^transcription$/i }));
+
+      expect(mockSelectConversionMode).toHaveBeenCalledWith('transcription');
+    });
+
+    it('shows transcript format options + language/translate controls and hides crop', () => {
+      mockConverterState(createJob({ conversionMode: 'transcription', outputFormat: 'txt' }));
+
+      render(<ConverterCard />);
+
+      expect(screen.getByTestId('conversion-mode-chip')).toHaveTextContent('Transcription Mode');
+
+      const formatSelector = screen.getByTestId('format-selector-mock');
+      ['txt', 'srt', 'vtt'].forEach((fmt) => expect(formatSelector).toHaveTextContent(fmt));
+
+      expect(screen.getByTestId('transcription-options')).toBeInTheDocument();
+      expect(screen.getByTestId('transcription-translate-checkbox')).toBeInTheDocument();
+      expect(screen.queryByTestId('crop-selector-mock')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('crop-preview-panel-mock')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^transcribe$/i })).toBeInTheDocument();
+    });
+
+    it('dispatches the translate flag when the checkbox is toggled', () => {
+      mockConverterState(createJob({ conversionMode: 'transcription', outputFormat: 'txt' }));
+
+      render(<ConverterCard />);
+
+      fireEvent.click(screen.getByRole('checkbox'));
+
+      expect(mockSetTranscriptionTranslate).toHaveBeenCalledWith(true);
+    });
+
+    it('renders the transcript text and copy control once a transcript exists', () => {
+      mockConverterState(
+        createJob({
+          conversionMode: 'transcription',
+          outputFormat: 'txt',
+          status: 'done',
+          transcriptText: 'Hello there, world.',
+          outputUrl: 'blob:transcript',
+          outputFileName: 'clip.txt',
+        })
+      );
+
+      render(<ConverterCard />);
+
+      expect(screen.getByTestId('transcript-panel')).toBeInTheDocument();
+      expect(screen.getByTestId('transcript-text')).toHaveTextContent('Hello there, world.');
+      expect(screen.getByTestId('copy-transcript-button')).toBeInTheDocument();
     });
   });
 });

@@ -11,6 +11,12 @@ import {
   ToggleButton,
   ToggleButtonGroup,
   Chip,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  FormControlLabel,
+  Checkbox,
 } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
@@ -23,8 +29,27 @@ import CropPreviewPanel from './CropPreviewPanel';
 import ConversionProgress from './ConversionProgress';
 import FileInfoCard from './FileInfoCard';
 import SaveDestinationDialog from './SaveDestinationDialog';
+import TranscriptPanel from './TranscriptPanel';
 import { useFileConverter } from '@/hooks/useFileConverter';
 import { getSupportedFormats, isValidVideoFile } from '@/utils/formatUtils';
+
+const TRANSCRIPTION_LANGUAGES: Array<{ value: string; label: string }> = [
+  { value: 'english', label: 'English' },
+  { value: 'spanish', label: 'Spanish' },
+  { value: 'french', label: 'French' },
+  { value: 'german', label: 'German' },
+  { value: 'italian', label: 'Italian' },
+  { value: 'portuguese', label: 'Portuguese' },
+  { value: 'russian', label: 'Russian' },
+  { value: 'ukrainian', label: 'Ukrainian' },
+  { value: 'japanese', label: 'Japanese' },
+  { value: 'korean', label: 'Korean' },
+  { value: 'chinese', label: 'Chinese' },
+  { value: 'arabic', label: 'Arabic' },
+  { value: 'hindi', label: 'Hindi' },
+];
+
+const AUTO_DETECT_LANGUAGE = 'auto';
 
 export default function ConverterCard() {
   const {
@@ -34,6 +59,8 @@ export default function ConverterCard() {
     selectFormat,
     selectCropMode,
     updateCustomCrop,
+    selectTranscriptionLanguage,
+    setTranscriptionTranslate,
     startConversion,
     reset,
   } = useFileConverter();
@@ -41,9 +68,25 @@ export default function ConverterCard() {
   const isActive = job.status === 'loading' || job.status === 'converting';
   const isDone = job.status === 'done';
   const isAudioExtractionMode = job.conversionMode === 'audio-extraction';
+  const isTranscriptionMode = job.conversionMode === 'transcription';
+  const isVideoMode = job.conversionMode === 'video';
   const formatOptions = getSupportedFormats(job.conversionMode);
   const hasValidSourceVideo = job.file !== null && isValidVideoFile(job.file);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
+
+  const modeLabel = isTranscriptionMode
+    ? 'Transcription Mode'
+    : isAudioExtractionMode
+      ? 'Audio Extraction Mode'
+      : 'Video Conversion Mode';
+  const modeAccentColor = isTranscriptionMode ? '#4FC3F7' : isAudioExtractionMode ? '#64DD17' : '#FFB74D';
+  const convertLabel = isTranscriptionMode
+    ? isActive
+      ? 'Transcribing…'
+      : 'Transcribe'
+    : isActive
+      ? 'Converting…'
+      : 'Convert';
 
   const handleReset = () => {
     setIsSaveDialogOpen(false);
@@ -176,19 +219,18 @@ export default function ConverterCard() {
             >
               <ToggleButton value="video">Video Conversion</ToggleButton>
               <ToggleButton value="audio-extraction">Audio Extraction Mode</ToggleButton>
+              <ToggleButton value="transcription">Transcription</ToggleButton>
             </ToggleButtonGroup>
 
             <Chip
               data-testid="conversion-mode-chip"
-              label={isAudioExtractionMode ? 'Audio Extraction Mode' : 'Video Conversion Mode'}
+              label={modeLabel}
               size="small"
               sx={{
                 fontWeight: 700,
-                color: isAudioExtractionMode ? '#64DD17' : '#FFB74D',
-                border: `1px solid ${isAudioExtractionMode ? 'rgba(100,221,23,0.7)' : 'rgba(255,183,77,0.65)'}`,
-                background: isAudioExtractionMode
-                  ? 'rgba(100,221,23,0.12)'
-                  : 'rgba(255,183,77,0.12)',
+                color: modeAccentColor,
+                border: `1px solid ${modeAccentColor}`,
+                background: `${modeAccentColor}1F`,
               }}
             />
           </Box>
@@ -200,7 +242,47 @@ export default function ConverterCard() {
             disabled={isActive}
           />
 
-          {!isAudioExtractionMode && (
+          {isTranscriptionMode && (
+            <Box
+              data-testid="transcription-options"
+              sx={{ mt: 2.5, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 2 }}
+            >
+              <FormControl size="small" sx={{ minWidth: 180 }} disabled={isActive}>
+                <InputLabel id="transcription-language-label">Spoken language</InputLabel>
+                <Select
+                  labelId="transcription-language-label"
+                  label="Spoken language"
+                  value={job.transcriptionLanguage ?? AUTO_DETECT_LANGUAGE}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    selectTranscriptionLanguage(value === AUTO_DETECT_LANGUAGE ? null : value);
+                  }}
+                  data-testid="transcription-language-select"
+                >
+                  <MenuItem value={AUTO_DETECT_LANGUAGE}>Auto-detect</MenuItem>
+                  {TRANSCRIPTION_LANGUAGES.map((language) => (
+                    <MenuItem key={language.value} value={language.value}>
+                      {language.label}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={job.transcriptionTranslate}
+                    onChange={(event) => setTranscriptionTranslate(event.target.checked)}
+                    disabled={isActive}
+                    data-testid="transcription-translate-checkbox"
+                  />
+                }
+                label="Translate to English"
+              />
+            </Box>
+          )}
+
+          {isVideoMode && (
             <CropSelector
               cropSettings={job.cropSettings}
               onCropModeChange={selectCropMode}
@@ -210,6 +292,8 @@ export default function ConverterCard() {
           )}
 
           <ConversionProgress status={job.status} progress={job.progress} />
+
+          {isTranscriptionMode && <TranscriptPanel text={job.transcriptText} />}
 
           <Box sx={{ mt: 3, display: 'flex', gap: 2, flexWrap: 'wrap' }}>
             {!isDone && (
@@ -222,7 +306,7 @@ export default function ConverterCard() {
                 disabled={!hasValidSourceVideo || isActive}
                 sx={{ flexGrow: 1 }}
               >
-                {isActive ? 'Converting\u2026' : 'Convert'}
+                {convertLabel}
               </Button>
             )}
 
@@ -257,7 +341,7 @@ export default function ConverterCard() {
         </CardContent>
       </Card>
 
-      {!isAudioExtractionMode && (
+      {isVideoMode && (
         <CropPreviewPanel
           cropSettings={job.cropSettings}
           file={job.file}

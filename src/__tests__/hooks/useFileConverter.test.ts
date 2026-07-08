@@ -10,6 +10,12 @@ const mockTranscode = jest.fn().mockResolvedValue({
   performanceNote: null,
 });
 
+const mockExtractPcmWav = jest.fn().mockResolvedValue(new Blob([new Uint8Array([1, 2, 3])]));
+const mockTranscribe = jest.fn().mockResolvedValue({
+  text: 'hello world',
+  chunks: [{ text: 'hello world', timestamp: [0, 1] }],
+});
+
 jest.mock('@/hooks/useFFmpeg', () => ({
   useFFmpeg: () => ({
     isLoaded: false,
@@ -18,8 +24,25 @@ jest.mock('@/hooks/useFFmpeg', () => ({
     ffmpegMode: 'multithreaded',
     loadFFmpeg: mockLoadFFmpeg,
     transcode: mockTranscode,
+    extractPcmWav: mockExtractPcmWav,
   }),
 }));
+
+jest.mock('@/hooks/useTranscriber', () => ({
+  useTranscriber: () => ({
+    transcribe: mockTranscribe,
+    terminate: jest.fn(),
+  }),
+}));
+
+jest.mock('@/utils/audioUtils', () => ({
+  decodeWavToPcm16k: jest.fn().mockResolvedValue(new Float32Array([0.1, 0.2])),
+}));
+
+beforeAll(() => {
+  global.URL.createObjectURL = jest.fn(() => 'blob:transcript');
+  global.URL.revokeObjectURL = jest.fn();
+});
 
 describe('useFileConverter', () => {
   beforeEach(() => {
@@ -103,6 +126,98 @@ describe('useFileConverter', () => {
 
     expect(result.current.job.cropSettings.mode).toBe('16:9');
     expect(result.current.job.cropSettings.custom.width).toBe('1920');
+  });
+
+  // Transcription mode (Story: audio/video -> text).
+  it('switching to transcription mode selects the txt transcript format', () => {
+    const { result } = renderHook(() => useFileConverter());
+
+    act(() => result.current.selectConversionMode('transcription'));
+
+    expect(result.current.job.conversionMode).toBe('transcription');
+    expect(result.current.job.outputFormat).toBe('txt');
+  });
+
+  it('rejects non-transcript formats while in transcription mode', () => {
+    const { result } = renderHook(() => useFileConverter());
+
+    act(() => result.current.selectConversionMode('transcription'));
+    act(() => result.current.selectFormat('mp4'));
+
+    expect(result.current.job.outputFormat).toBe('txt');
+  });
+
+  it('restores the last video and transcript formats across mode round-trips', () => {
+    const { result } = renderHook(() => useFileConverter());
+
+    act(() => result.current.selectFormat('webm'));
+    act(() => result.current.selectConversionMode('transcription'));
+    act(() => result.current.selectFormat('srt'));
+
+    act(() => result.current.selectConversionMode('video'));
+    expect(result.current.job.outputFormat).toBe('webm');
+
+    act(() => result.current.selectConversionMode('transcription'));
+    expect(result.current.job.outputFormat).toBe('srt');
+  });
+
+  it('runs the transcription pipeline and stores the transcript result', async () => {
+    const { result } = renderHook(() => useFileConverter());
+    const file = new File([''], 'lecture.mp4', { type: 'video/mp4' });
+
+    act(() => result.current.selectFile(file));
+    act(() => result.current.selectConversionMode('transcription'));
+
+    await act(async () => {
+      await result.current.startConversion();
+    });
+
+    expect(mockExtractPcmWav).toHaveBeenCalledWith(file, expect.any(Function));
+    expect(mockTranscribe).toHaveBeenCalledWith(expect.any(Float32Array), {
+      language: null,
+      translate: false,
+      onModelProgress: expect.any(Function),
+    });
+    expect(result.current.job.status).toBe('done');
+    expect(result.current.job.transcriptText).toBe('hello world');
+    expect(result.current.job.outputFileName).toBe('lecture.txt');
+    expect(result.current.job.outputUrl).toBe('blob:transcript');
+  });
+
+  it('passes selected language and translate flag to the transcriber', async () => {
+    const { result } = renderHook(() => useFileConverter());
+    const file = new File([''], 'lecture.mp4', { type: 'video/mp4' });
+
+    act(() => result.current.selectFile(file));
+    act(() => result.current.selectConversionMode('transcription'));
+    act(() => result.current.selectTranscriptionLanguage('spanish'));
+    act(() => result.current.setTranscriptionTranslate(true));
+
+    await act(async () => {
+      await result.current.startConversion();
+    });
+
+    expect(mockTranscribe).toHaveBeenCalledWith(expect.any(Float32Array), {
+      language: 'spanish',
+      translate: true,
+      onModelProgress: expect.any(Function),
+    });
+  });
+
+  it('re-serializes the output file name when the transcript format changes', async () => {
+    const { result } = renderHook(() => useFileConverter());
+    const file = new File([''], 'lecture.mp4', { type: 'video/mp4' });
+
+    act(() => result.current.selectFile(file));
+    act(() => result.current.selectConversionMode('transcription'));
+    await act(async () => {
+      await result.current.startConversion();
+    });
+
+    act(() => result.current.selectFormat('srt'));
+
+    expect(result.current.job.outputFormat).toBe('srt');
+    expect(result.current.job.outputFileName).toBe('lecture.srt');
   });
 
   it('selectCropMode updates crop mode', () => {
