@@ -8,6 +8,7 @@ export interface TranscribeOptions {
   language: string | null;
   translate: boolean;
   onModelProgress?: (percent: number) => void;
+  onTranscribeProgress?: (percent: number) => void;
 }
 
 export interface TranscriptResult {
@@ -60,6 +61,11 @@ export function useTranscriber(): UseTranscriberReturn {
               }
               break;
             }
+            case 'transcribe-progress':
+              if (options.onTranscribeProgress) {
+                options.onTranscribeProgress(Math.round(message.progress * 100));
+              }
+              break;
             case 'result':
               cleanup();
               resolve({ text: message.text, chunks: message.chunks });

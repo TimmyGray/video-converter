@@ -177,6 +177,7 @@ describe('useFileConverter', () => {
       language: null,
       translate: false,
       onModelProgress: expect.any(Function),
+      onTranscribeProgress: expect.any(Function),
     });
     expect(result.current.job.status).toBe('done');
     expect(result.current.job.transcriptText).toBe('hello world');
@@ -201,6 +202,7 @@ describe('useFileConverter', () => {
       language: 'spanish',
       translate: true,
       onModelProgress: expect.any(Function),
+      onTranscribeProgress: expect.any(Function),
     });
   });
 

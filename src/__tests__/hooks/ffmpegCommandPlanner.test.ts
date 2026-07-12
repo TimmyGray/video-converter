@@ -4,11 +4,24 @@ import { VideoFormat } from '@/types';
 const VIDEO_FORMATS: VideoFormat[] = ['mp4', 'avi', 'mov', 'mkv', 'webm', 'gif'];
 
 describe('getCommandAttempts - audio extraction (mp3)', () => {
-  it('emits a single deterministic audio-only profile with -vn and 320k mp3', () => {
+  it('emits a single deterministic audio-only profile with -vn and 128k VBR mp3', () => {
     const attempts = getCommandAttempts('clip.mov', 'clip.mov', 'mp3', 'clip_audio.mp3', null);
 
     expect(attempts).toEqual([
-      ['-i', 'clip.mov', '-vn', '-c:a', 'libmp3lame', '-b:a', '320k', 'clip_audio.mp3'],
+      [
+        '-i',
+        'clip.mov',
+        '-vn',
+        '-c:a',
+        'libmp3lame',
+        '-b:a',
+        '128k',
+        '-abr',
+        '1',
+        '-sample_fmt',
+        's16p',
+        'clip_audio.mp3',
+      ],
     ]);
   });
 

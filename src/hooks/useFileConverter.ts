@@ -240,12 +240,14 @@ export function useFileConverter(): UseFileConverterReturn {
         setJob((prev) => ({ ...prev, progress: 15 }));
         const pcm = await decodeWavToPcm16k(wavBlob);
 
-        // 3. Run Whisper in the worker (model download maps to 15–80%).
+        // 3. Run Whisper in the worker (model download maps to 15–80%, transcription 80–100%).
         const { text, chunks } = await transcribe(pcm, {
           language: job.transcriptionLanguage,
           translate: job.transcriptionTranslate,
           onModelProgress: (percent: number) =>
             setJob((prev) => ({ ...prev, progress: 15 + Math.round(percent * 0.65) })),
+          onTranscribeProgress: (percent: number) =>
+            setJob((prev) => ({ ...prev, progress: 80 + Math.round(percent * 0.2) })),
         });
 
         const transcriptFormat: TranscriptFormat = isTranscriptFormat(job.outputFormat)

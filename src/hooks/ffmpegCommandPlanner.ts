@@ -19,8 +19,23 @@ export function getCommandAttempts(
   const filterArgs = cropFilter ? ['-vf', cropFilter] : [];
 
   if (outputFormat === 'mp3') {
-    // Audio extraction uses a single deterministic profile to keep quality stable.
-    return [['-i', inputName, '-vn', '-c:a', 'libmp3lame', '-b:a', '320k', outputFileName]];
+    // Audio extraction uses a single deterministic profile: 128k VBR (ABR-targeted), 16-bit samples.
+    return [
+      [
+        '-i',
+        inputName,
+        '-vn',
+        '-c:a',
+        'libmp3lame',
+        '-b:a',
+        '128k',
+        '-abr',
+        '1',
+        '-sample_fmt',
+        's16p',
+        outputFileName,
+      ],
+    ];
   }
 
   if (outputFormat === 'webm') {
