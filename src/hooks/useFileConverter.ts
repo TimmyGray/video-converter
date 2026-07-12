@@ -1,11 +1,20 @@
 'use client';
 
 import { useState, useRef, useCallback } from 'react';
-import { ConversionJob, ConversionMode, CropMode, TranscriptFormat, VideoFormat } from '@/types';
+import {
+  ConversionJob,
+  ConversionMode,
+  CropMode,
+  TranscriptChunk,
+  TranscriptFormat,
+  VideoFormat,
+} from '@/types';
 import { useFFmpeg } from '@/hooks/useFFmpeg';
 import { useTranscriber } from '@/hooks/useTranscriber';
 import { getFormatInfo, getOutputFileName, isValidSourceFile } from '@/utils/formatUtils';
 import { decodeWavToPcm16k } from '@/utils/audioUtils';
+import { getHfToken } from '@/utils/hfToken';
+import { transcribeViaHf } from '@/utils/hfTranscribe';
 import { serializeTranscript } from '@/utils/subtitleUtils';
 
 const TRANSCRIPT_FORMATS: TranscriptFormat[] = ['txt', 'srt', 'vtt'];
@@ -240,19 +249,49 @@ export function useFileConverter(): UseFileConverterReturn {
         setJob((prev) => ({ ...prev, progress: 15 }));
         const pcm = await decodeWavToPcm16k(wavBlob);
 
-        // 3. Run Whisper in the worker (model download maps to 15–80%, transcription 80–100%).
-        const { text, chunks } = await transcribe(pcm, {
-          language: job.transcriptionLanguage,
-          translate: job.transcriptionTranslate,
-          onModelProgress: (percent: number) =>
-            setJob((prev) => ({ ...prev, progress: 15 + Math.round(percent * 0.65) })),
-          onTranscribeProgress: (percent: number) =>
-            setJob((prev) => ({ ...prev, progress: 80 + Math.round(percent * 0.2) })),
-          // Fill the transcript panel block-by-block. Guarded on 'converting' so a late
-          // worker message cannot resurrect text after reset/error/completion.
-          onPartialText: (text: string) =>
-            setJob((prev) => (prev.status === 'converting' ? { ...prev, transcriptText: text } : prev)),
-        });
+        // Fill the transcript panel block-by-block. Guarded on 'converting' so a late
+        // message cannot resurrect text after reset/error/completion.
+        const onPartialText = (partial: string) =>
+          setJob((prev) => (prev.status === 'converting' ? { ...prev, transcriptText: partial } : prev));
+
+        // 3. Transcribe. Prefer the HF hosted API when a token is set, the browser is
+        //    online, and we are not translating (hosted is transcribe-only auto-detect).
+        //    Any hosted failure falls back to the local worker so a transcript is always produced.
+        const runLocal = () =>
+          transcribe(pcm, {
+            language: job.transcriptionLanguage,
+            translate: job.transcriptionTranslate,
+            onModelProgress: (percent: number) =>
+              setJob((prev) => ({ ...prev, progress: 15 + Math.round(percent * 0.65) })),
+            onTranscribeProgress: (percent: number) =>
+              setJob((prev) => ({ ...prev, progress: 80 + Math.round(percent * 0.2) })),
+            onPartialText,
+          });
+
+        const hfToken = getHfToken();
+        const online = typeof navigator === 'undefined' || navigator.onLine !== false;
+        const useHosted = Boolean(hfToken) && online && !job.transcriptionTranslate;
+
+        let result: { text: string; chunks: TranscriptChunk[] };
+        if (useHosted) {
+          try {
+            result = await transcribeViaHf(pcm, {
+              token: hfToken,
+              onPartialText,
+              onProgress: (percent: number) =>
+                setJob((prev) => ({ ...prev, progress: 15 + Math.round(percent * 0.85) })),
+            });
+          } catch (hostedError) {
+            console.warn(
+              '[VideoConverter] HF hosted transcription failed; falling back to local worker:',
+              hostedError
+            );
+            result = await runLocal();
+          }
+        } else {
+          result = await runLocal();
+        }
+        const { text, chunks } = result;
 
         const transcriptFormat: TranscriptFormat = isTranscriptFormat(job.outputFormat)
           ? job.outputFormat

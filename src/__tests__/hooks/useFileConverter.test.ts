@@ -39,6 +39,16 @@ jest.mock('@/utils/audioUtils', () => ({
   decodeWavToPcm16k: jest.fn().mockResolvedValue(new Float32Array([0.1, 0.2])),
 }));
 
+const mockGetHfToken = jest.fn(() => '');
+jest.mock('@/utils/hfToken', () => ({
+  getHfToken: () => mockGetHfToken(),
+}));
+
+const mockTranscribeViaHf = jest.fn();
+jest.mock('@/utils/hfTranscribe', () => ({
+  transcribeViaHf: (...args: unknown[]) => mockTranscribeViaHf(...args),
+}));
+
 beforeAll(() => {
   global.URL.createObjectURL = jest.fn(() => 'blob:transcript');
   global.URL.revokeObjectURL = jest.fn();
@@ -47,6 +57,11 @@ beforeAll(() => {
 describe('useFileConverter', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockGetHfToken.mockReturnValue('');
+    mockTranscribeViaHf.mockResolvedValue({
+      text: 'hosted text',
+      chunks: [{ text: 'hosted text', timestamp: [0, 1] }],
+    });
   });
 
   it('initialises with default state', () => {
@@ -232,6 +247,80 @@ describe('useFileConverter', () => {
     expect(capturedPartial).toEqual(expect.any(Function));
     expect(result.current.job.transcriptText).toBe('Hello world');
     expect(result.current.job.status).toBe('done');
+  });
+
+  it('uses HF hosted transcription when a token is set, online, and not translating', async () => {
+    mockGetHfToken.mockReturnValue('hf_x');
+
+    const { result } = renderHook(() => useFileConverter());
+    const file = new File([''], 'lecture.mp4', { type: 'video/mp4' });
+    act(() => result.current.selectFile(file));
+    act(() => result.current.selectConversionMode('transcription'));
+
+    await act(async () => {
+      await result.current.startConversion();
+    });
+
+    expect(mockTranscribeViaHf).toHaveBeenCalledWith(
+      expect.any(Float32Array),
+      expect.objectContaining({ token: 'hf_x' })
+    );
+    expect(mockTranscribe).not.toHaveBeenCalled();
+    expect(result.current.job.transcriptText).toBe('hosted text');
+    expect(result.current.job.status).toBe('done');
+  });
+
+  it('falls back to the local worker when hosted transcription throws', async () => {
+    mockGetHfToken.mockReturnValue('hf_x');
+    mockTranscribeViaHf.mockRejectedValueOnce(new Error('CORS blocked'));
+
+    const { result } = renderHook(() => useFileConverter());
+    const file = new File([''], 'lecture.mp4', { type: 'video/mp4' });
+    act(() => result.current.selectFile(file));
+    act(() => result.current.selectConversionMode('transcription'));
+
+    await act(async () => {
+      await result.current.startConversion();
+    });
+
+    expect(mockTranscribeViaHf).toHaveBeenCalled();
+    expect(mockTranscribe).toHaveBeenCalled();
+    expect(result.current.job.transcriptText).toBe('hello world');
+    expect(result.current.job.status).toBe('done');
+  });
+
+  it('uses the local worker when no token is set', async () => {
+    const { result } = renderHook(() => useFileConverter());
+    const file = new File([''], 'lecture.mp4', { type: 'video/mp4' });
+    act(() => result.current.selectFile(file));
+    act(() => result.current.selectConversionMode('transcription'));
+
+    await act(async () => {
+      await result.current.startConversion();
+    });
+
+    expect(mockTranscribeViaHf).not.toHaveBeenCalled();
+    expect(mockTranscribe).toHaveBeenCalled();
+  });
+
+  it('uses the local worker when translating even with a token', async () => {
+    mockGetHfToken.mockReturnValue('hf_x');
+
+    const { result } = renderHook(() => useFileConverter());
+    const file = new File([''], 'lecture.mp4', { type: 'video/mp4' });
+    act(() => result.current.selectFile(file));
+    act(() => result.current.selectConversionMode('transcription'));
+    act(() => result.current.setTranscriptionTranslate(true));
+
+    await act(async () => {
+      await result.current.startConversion();
+    });
+
+    expect(mockTranscribeViaHf).not.toHaveBeenCalled();
+    expect(mockTranscribe).toHaveBeenCalledWith(
+      expect.any(Float32Array),
+      expect.objectContaining({ translate: true })
+    );
   });
 
   it('re-serializes the output file name when the transcript format changes', async () => {

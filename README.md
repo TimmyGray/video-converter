@@ -5,7 +5,8 @@ A browser-based video converter built with Next.js, Material UI, and FFmpeg WebA
 ## Features
 
 - 🎬 Convert between MP4, AVI, MOV, MKV, WEBM, and GIF formats
-- 🔒 100% client-side processing via FFmpeg WASM
+- 🔒 100% client-side processing via FFmpeg WASM (local transcription runs in-browser via Whisper WASM)
+- ☁️ Optional: paste a Hugging Face token to transcribe on HF's hosted `whisper-large-v3` for higher accuracy. This is the **only** feature that leaves the device — it uploads your audio to Hugging Face, and only when a token is set. Without a token, transcription stays fully on-device, and any hosted failure falls back to local automatically.
 - 📱 Progressive Web App (PWA) with offline support
 - 🎨 Dark theme with amber/orange glow aesthetics (Material UI)
 - 📦 Drag-and-drop file upload

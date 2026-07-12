@@ -17,6 +17,8 @@ import {
   MenuItem,
   FormControlLabel,
   Checkbox,
+  TextField,
+  Link,
 } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
@@ -32,6 +34,7 @@ import SaveDestinationDialog from './SaveDestinationDialog';
 import TranscriptPanel from './TranscriptPanel';
 import { useFileConverter } from '@/hooks/useFileConverter';
 import { getSupportedFormats, isValidSourceFile } from '@/utils/formatUtils';
+import { getHfToken, setHfToken } from '@/utils/hfToken';
 
 const TRANSCRIPTION_LANGUAGES: Array<{ value: string; label: string }> = [
   { value: 'english', label: 'English' },
@@ -73,6 +76,14 @@ export default function ConverterCard() {
   const formatOptions = getSupportedFormats(job.conversionMode);
   const hasValidSource = job.file !== null && isValidSourceFile(job.file, job.conversionMode);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
+
+  // HF token lives in localStorage. ConverterCard is client-only (dynamic ssr:false), so a lazy
+  // initializer reads it safely with no hydration mismatch.
+  const [hfToken, setHfTokenState] = useState(() => getHfToken());
+  const handleHfTokenChange = (value: string) => {
+    setHfTokenState(value);
+    setHfToken(value);
+  };
 
   const modeLabel = isTranscriptionMode
     ? 'Transcription Mode'
@@ -283,6 +294,34 @@ export default function ConverterCard() {
                   />
                 }
                 label="Translate to English"
+              />
+
+              <TextField
+                type="password"
+                size="small"
+                label="Hugging Face token (optional)"
+                placeholder="hf_…"
+                value={hfToken}
+                onChange={(event) => handleHfTokenChange(event.target.value)}
+                disabled={isActive}
+                data-testid="hf-token-input"
+                sx={{ flexBasis: '100%' }}
+                helperText={
+                  <>
+                    With a{' '}
+                    <Link
+                      href="https://huggingface.co/settings/tokens"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      sx={{ color: '#4FC3F7' }}
+                    >
+                      token
+                    </Link>
+                    , transcription runs on Hugging Face&rsquo;s hosted whisper-large-v3 for higher
+                    accuracy — this uploads your audio to Hugging Face. Leave blank to keep everything
+                    on-device. Falls back to on-device automatically if the hosted call fails.
+                  </>
+                }
               />
             </Box>
           )}

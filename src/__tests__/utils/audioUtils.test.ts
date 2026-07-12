@@ -1,4 +1,4 @@
-import { decodeWavToPcm16k } from '@/utils/audioUtils';
+import { decodeWavToPcm16k, encodePcm16kToWav, pcm16kToWavBytes } from '@/utils/audioUtils';
 
 interface FakeBufferConfig {
   sampleRate: number;
@@ -65,5 +65,44 @@ describe('decodeWavToPcm16k', () => {
     const result = await decodeWavToPcm16k({ arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)) } as unknown as Blob);
 
     expect(result).toBe(renderResult);
+  });
+});
+
+describe('pcm16kToWavBytes', () => {
+  const viewOf = (pcm: Float32Array) => new DataView(pcm16kToWavBytes(pcm).buffer);
+  const readString = (view: DataView, offset: number, length: number) =>
+    Array.from({ length }, (_, i) => String.fromCharCode(view.getUint8(offset + i))).join('');
+
+  it('writes a canonical 16 kHz mono 16-bit PCM header', () => {
+    const pcm = new Float32Array([0, 0.5, -0.5]);
+    const view = viewOf(pcm);
+
+    expect(readString(view, 0, 4)).toBe('RIFF');
+    expect(readString(view, 8, 4)).toBe('WAVE');
+    expect(readString(view, 12, 4)).toBe('fmt ');
+    expect(readString(view, 36, 4)).toBe('data');
+    expect(view.getUint16(20, true)).toBe(1); // PCM
+    expect(view.getUint16(22, true)).toBe(1); // mono
+    expect(view.getUint32(24, true)).toBe(16000); // sample rate
+    expect(view.getUint16(34, true)).toBe(16); // bits per sample
+    expect(view.getUint32(40, true)).toBe(pcm.length * 2); // data length
+  });
+
+  it('has byte length 44 + 2 per sample', () => {
+    expect(pcm16kToWavBytes(new Float32Array(100)).byteLength).toBe(44 + 200);
+  });
+
+  it('clamps out-of-range samples to int16 bounds', () => {
+    const view = viewOf(new Float32Array([2, -2]));
+    expect(view.getInt16(44, true)).toBe(32767);
+    expect(view.getInt16(46, true)).toBe(-32768);
+  });
+});
+
+describe('encodePcm16kToWav', () => {
+  it('wraps the PCM bytes in an audio/wav blob', () => {
+    const blob = encodePcm16kToWav(new Float32Array(100));
+    expect(blob.type).toBe('audio/wav');
+    expect(blob.size).toBe(44 + 200);
   });
 });
