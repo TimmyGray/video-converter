@@ -13,7 +13,10 @@ if (env.backends?.onnx?.wasm) {
   env.backends.onnx.wasm.wasmPaths = '/ort/';
 }
 
-const MODEL_ID = 'onnx-community/whisper-base';
+// whisper-small: markedly better accuracy than -base and still runs on WASM-only
+// (no-GPU) clients. The device/dtype ladder below degrades gracefully if a quantized
+// variant is missing, so a model swap only needs this constant to change.
+const MODEL_ID = 'onnx-community/whisper-small';
 
 export interface TranscribeRequest {
   type: 'transcribe';
