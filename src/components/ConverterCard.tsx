@@ -31,7 +31,7 @@ import FileInfoCard from './FileInfoCard';
 import SaveDestinationDialog from './SaveDestinationDialog';
 import TranscriptPanel from './TranscriptPanel';
 import { useFileConverter } from '@/hooks/useFileConverter';
-import { getSupportedFormats, isValidVideoFile } from '@/utils/formatUtils';
+import { getSupportedFormats, isValidSourceFile } from '@/utils/formatUtils';
 
 const TRANSCRIPTION_LANGUAGES: Array<{ value: string; label: string }> = [
   { value: 'english', label: 'English' },
@@ -71,7 +71,7 @@ export default function ConverterCard() {
   const isTranscriptionMode = job.conversionMode === 'transcription';
   const isVideoMode = job.conversionMode === 'video';
   const formatOptions = getSupportedFormats(job.conversionMode);
-  const hasValidSourceVideo = job.file !== null && isValidVideoFile(job.file);
+  const hasValidSource = job.file !== null && isValidSourceFile(job.file, job.conversionMode);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
 
   const modeLabel = isTranscriptionMode
@@ -166,7 +166,12 @@ export default function ConverterCard() {
             </Typography>
           </Box>
 
-          <FileDropZone file={job.file} onFileSelect={selectFile} disabled={isActive} />
+          <FileDropZone
+            file={job.file}
+            onFileSelect={selectFile}
+            disabled={isActive}
+            conversionMode={job.conversionMode}
+          />
 
           <Box sx={{ mt: 3 }}>
             <FileInfoCard
@@ -303,7 +308,7 @@ export default function ConverterCard() {
                 size="large"
                 startIcon={<AutoFixHighIcon />}
                 onClick={startConversion}
-                disabled={!hasValidSourceVideo || isActive}
+                disabled={!hasValidSource || isActive}
                 sx={{ flexGrow: 1 }}
               >
                 {convertLabel}

@@ -2,6 +2,8 @@ import {
   getSupportedFormats,
   getFormatInfo,
   isValidVideoFile,
+  isValidAudioFile,
+  isValidSourceFile,
   getOutputFileName,
   FORMAT_INFO,
 } from '@/utils/formatUtils';
@@ -63,6 +65,58 @@ describe('isValidVideoFile', () => {
 
   it('rejects image files', () => {
     expect(isValidVideoFile(makeFile('photo.jpg', 'image/jpeg'))).toBe(false);
+  });
+});
+
+describe('isValidAudioFile', () => {
+  const makeFile = (name: string, type: string) => new File([], name, { type });
+
+  it('accepts audio/* mime types', () => {
+    expect(isValidAudioFile(makeFile('podcast.mp3', 'audio/mpeg'))).toBe(true);
+  });
+
+  it('accepts common audio extensions regardless of mime', () => {
+    for (const ext of ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'oga', 'opus', 'flac', 'weba', 'wma']) {
+      expect(isValidAudioFile(makeFile(`clip.${ext}`, 'application/octet-stream'))).toBe(true);
+    }
+  });
+
+  it('rejects video files', () => {
+    expect(isValidAudioFile(makeFile('test.mp4', 'video/mp4'))).toBe(false);
+  });
+
+  it('rejects non-media files', () => {
+    expect(isValidAudioFile(makeFile('doc.pdf', 'application/pdf'))).toBe(false);
+  });
+});
+
+describe('isValidSourceFile', () => {
+  const makeFile = (name: string, type: string) => new File([], name, { type });
+  const audio = makeFile('podcast.mp3', 'audio/mpeg');
+  const video = makeFile('demo.mp4', 'video/mp4');
+  const pdf = makeFile('doc.pdf', 'application/pdf');
+
+  it('accepts audio only in transcription mode', () => {
+    expect(isValidSourceFile(audio, 'transcription')).toBe(true);
+    expect(isValidSourceFile(audio, 'video')).toBe(false);
+    expect(isValidSourceFile(audio, 'audio-extraction')).toBe(false);
+  });
+
+  it('accepts video in every mode', () => {
+    expect(isValidSourceFile(video, 'transcription')).toBe(true);
+    expect(isValidSourceFile(video, 'video')).toBe(true);
+    expect(isValidSourceFile(video, 'audio-extraction')).toBe(true);
+  });
+
+  it('rejects non-media files in every mode', () => {
+    expect(isValidSourceFile(pdf, 'transcription')).toBe(false);
+    expect(isValidSourceFile(pdf, 'video')).toBe(false);
+    expect(isValidSourceFile(pdf, 'audio-extraction')).toBe(false);
+  });
+
+  it('defaults to video-only when mode is omitted', () => {
+    expect(isValidSourceFile(audio)).toBe(false);
+    expect(isValidSourceFile(video)).toBe(true);
   });
 });
 

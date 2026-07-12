@@ -104,6 +104,23 @@ export function isValidVideoFile(file: File): boolean {
   );
 }
 
+export function isValidAudioFile(file: File): boolean {
+  return (
+    file.type.startsWith('audio/') ||
+    file.name.match(/\.(mp3|wav|m4a|aac|ogg|oga|opus|flac|weba|wma)$/i) !== null
+  );
+}
+
+/**
+ * Mode-aware source gate shared by the drop zone, the start-conversion guard, and the
+ * convert-button enablement so they never disagree. Transcription accepts audio in addition
+ * to video; every other mode stays video-only.
+ */
+export function isValidSourceFile(file: File, mode: ConversionMode = 'video'): boolean {
+  if (isValidVideoFile(file)) return true;
+  return mode === 'transcription' && isValidAudioFile(file);
+}
+
 export function getOutputFileName(
   inputName: string,
   format: VideoFormat,

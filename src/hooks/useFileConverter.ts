@@ -4,7 +4,7 @@ import { useState, useRef, useCallback } from 'react';
 import { ConversionJob, ConversionMode, CropMode, TranscriptFormat, VideoFormat } from '@/types';
 import { useFFmpeg } from '@/hooks/useFFmpeg';
 import { useTranscriber } from '@/hooks/useTranscriber';
-import { getFormatInfo, getOutputFileName, isValidVideoFile } from '@/utils/formatUtils';
+import { getFormatInfo, getOutputFileName, isValidSourceFile } from '@/utils/formatUtils';
 import { decodeWavToPcm16k } from '@/utils/audioUtils';
 import { serializeTranscript } from '@/utils/subtitleUtils';
 
@@ -206,7 +206,7 @@ export function useFileConverter(): UseFileConverterReturn {
   }, []);
 
   const startConversion = useCallback(async () => {
-    if (!job.file || !isValidVideoFile(job.file)) return;
+    if (!job.file || !isValidSourceFile(job.file, job.conversionMode)) return;
 
     setJob((prev) => ({
       ...prev,

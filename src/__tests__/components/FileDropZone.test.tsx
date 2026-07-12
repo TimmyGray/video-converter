@@ -51,6 +51,32 @@ describe('FileDropZone', () => {
     expect(mockOnFileSelect).not.toHaveBeenCalled();
   });
 
+  it('accepts an audio file in transcription mode', () => {
+    render(
+      <FileDropZone file={null} onFileSelect={mockOnFileSelect} conversionMode="transcription" />
+    );
+    const zone = screen.getByTestId('file-drop-zone');
+    const audio = new File(['content'], 'podcast.mp3', { type: 'audio/mpeg' });
+    fireEvent.drop(zone, { dataTransfer: { files: [audio] } });
+    expect(mockOnFileSelect).toHaveBeenCalledWith(audio);
+  });
+
+  it('rejects an audio file in video mode', () => {
+    render(<FileDropZone file={null} onFileSelect={mockOnFileSelect} conversionMode="video" />);
+    const zone = screen.getByTestId('file-drop-zone');
+    const audio = new File(['content'], 'podcast.mp3', { type: 'audio/mpeg' });
+    fireEvent.drop(zone, { dataTransfer: { files: [audio] } });
+    expect(mockOnFileSelect).not.toHaveBeenCalled();
+    expect(screen.getByText(/valid video file/i)).toBeInTheDocument();
+  });
+
+  it('offers a video or audio prompt in transcription mode', () => {
+    render(
+      <FileDropZone file={null} onFileSelect={mockOnFileSelect} conversionMode="transcription" />
+    );
+    expect(screen.getByText(/drag & drop a video or audio file/i)).toBeInTheDocument();
+  });
+
   it('updates drag state on dragenter/dragleave', () => {
     render(<FileDropZone file={null} onFileSelect={mockOnFileSelect} />);
     const zone = screen.getByTestId('file-drop-zone');
