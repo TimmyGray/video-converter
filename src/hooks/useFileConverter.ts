@@ -248,6 +248,10 @@ export function useFileConverter(): UseFileConverterReturn {
             setJob((prev) => ({ ...prev, progress: 15 + Math.round(percent * 0.65) })),
           onTranscribeProgress: (percent: number) =>
             setJob((prev) => ({ ...prev, progress: 80 + Math.round(percent * 0.2) })),
+          // Fill the transcript panel block-by-block. Guarded on 'converting' so a late
+          // worker message cannot resurrect text after reset/error/completion.
+          onPartialText: (text: string) =>
+            setJob((prev) => (prev.status === 'converting' ? { ...prev, transcriptText: text } : prev)),
         });
 
         const transcriptFormat: TranscriptFormat = isTranscriptFormat(job.outputFormat)

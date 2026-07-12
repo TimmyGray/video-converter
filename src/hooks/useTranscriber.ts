@@ -9,6 +9,7 @@ export interface TranscribeOptions {
   translate: boolean;
   onModelProgress?: (percent: number) => void;
   onTranscribeProgress?: (percent: number) => void;
+  onPartialText?: (text: string) => void;
 }
 
 export interface TranscriptResult {
@@ -65,6 +66,9 @@ export function useTranscriber(): UseTranscriberReturn {
               if (options.onTranscribeProgress) {
                 options.onTranscribeProgress(Math.round(message.progress * 100));
               }
+              break;
+            case 'transcribe-partial':
+              options.onPartialText?.(message.text);
               break;
             case 'result':
               cleanup();

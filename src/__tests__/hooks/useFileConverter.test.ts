@@ -178,6 +178,7 @@ describe('useFileConverter', () => {
       translate: false,
       onModelProgress: expect.any(Function),
       onTranscribeProgress: expect.any(Function),
+      onPartialText: expect.any(Function),
     });
     expect(result.current.job.status).toBe('done');
     expect(result.current.job.transcriptText).toBe('hello world');
@@ -203,7 +204,34 @@ describe('useFileConverter', () => {
       translate: true,
       onModelProgress: expect.any(Function),
       onTranscribeProgress: expect.any(Function),
+      onPartialText: expect.any(Function),
     });
+  });
+
+  it('streams partial transcript text into the job while converting', async () => {
+    // Drive the onPartialText callback mid-transcription and assert the live text
+    // is exposed before the final result resolves.
+    let capturedPartial: ((text: string) => void) | undefined;
+    mockTranscribe.mockImplementationOnce(async (_audio, options) => {
+      capturedPartial = options.onPartialText;
+      options.onPartialText?.('Hello');
+      options.onPartialText?.('Hello world');
+      return { text: 'Hello world', chunks: [{ text: 'Hello world', timestamp: [0, 1] }] };
+    });
+
+    const { result } = renderHook(() => useFileConverter());
+    const file = new File([''], 'lecture.mp4', { type: 'video/mp4' });
+
+    act(() => result.current.selectFile(file));
+    act(() => result.current.selectConversionMode('transcription'));
+
+    await act(async () => {
+      await result.current.startConversion();
+    });
+
+    expect(capturedPartial).toEqual(expect.any(Function));
+    expect(result.current.job.transcriptText).toBe('Hello world');
+    expect(result.current.job.status).toBe('done');
   });
 
   it('re-serializes the output file name when the transcript format changes', async () => {

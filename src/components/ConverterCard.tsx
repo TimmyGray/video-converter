@@ -298,7 +298,9 @@ export default function ConverterCard() {
 
           <ConversionProgress status={job.status} progress={job.progress} />
 
-          {isTranscriptionMode && <TranscriptPanel text={job.transcriptText} />}
+          {isTranscriptionMode && (
+            <TranscriptPanel text={job.transcriptText} streaming={job.status === 'converting'} />
+          )}
 
           <Box sx={{ mt: 3, display: 'flex', gap: 2, flexWrap: 'wrap' }}>
             {!isDone && (

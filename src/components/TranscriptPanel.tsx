@@ -7,9 +7,10 @@ import CheckIcon from '@mui/icons-material/Check';
 
 interface TranscriptPanelProps {
   text: string | null;
+  streaming?: boolean;
 }
 
-export default function TranscriptPanel({ text }: TranscriptPanelProps) {
+export default function TranscriptPanel({ text, streaming }: TranscriptPanelProps) {
   const [copied, setCopied] = useState(false);
 
   if (!text) return null;
@@ -27,16 +28,35 @@ export default function TranscriptPanel({ text }: TranscriptPanelProps) {
   return (
     <Box sx={{ mt: 3 }} data-testid="transcript-panel">
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
-        <Typography
-          variant="subtitle2"
-          sx={{
-            color: 'rgba(255,255,255,0.6)',
-            textTransform: 'uppercase',
-            letterSpacing: 1,
-          }}
-        >
-          Transcript
-        </Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Typography
+            variant="subtitle2"
+            sx={{
+              color: 'rgba(255,255,255,0.6)',
+              textTransform: 'uppercase',
+              letterSpacing: 1,
+            }}
+          >
+            Transcript
+          </Typography>
+          {streaming && (
+            <Typography
+              variant="caption"
+              data-testid="transcript-streaming-indicator"
+              sx={{
+                color: '#4FC3F7',
+                fontWeight: 700,
+                animation: 'transcript-pulse 1.2s ease-in-out infinite',
+                '@keyframes transcript-pulse': {
+                  '0%, 100%': { opacity: 0.35 },
+                  '50%': { opacity: 1 },
+                },
+              }}
+            >
+              ● Transcribing…
+            </Typography>
+          )}
+        </Box>
         <Button
           size="small"
           onClick={handleCopy}

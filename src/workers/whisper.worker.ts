@@ -32,6 +32,7 @@ export type WorkerOutbound =
   | { type: 'model-progress'; id: number; data: ProgressPayload }
   | { type: 'ready'; id: number }
   | { type: 'transcribe-progress'; id: number; progress: number }
+  | { type: 'transcribe-partial'; id: number; text: string }
   | { type: 'result'; id: number; text: string; chunks: TranscriptChunk[] }
   | { type: 'error'; id: number; message: string };
 
@@ -191,7 +192,13 @@ ctx.addEventListener('message', async (event) => {
       }
 
       const text = (output.text ?? '').trim();
-      if (text) fullText += (fullText ? ' ' : '') + text;
+      if (text) {
+        fullText += (fullText ? ' ' : '') + text;
+        // Emit the accumulated transcript so the UI can fill in block-by-block instead of
+        // waiting for the final result. Accumulated (not delta) keeps the receiver an
+        // idempotent replace.
+        ctx.postMessage({ type: 'transcribe-partial', id, text: fullText });
+      }
       for (const chunk of output.chunks ?? []) {
         const [chunkStart, chunkEnd] = chunk.timestamp;
         allChunks.push({
