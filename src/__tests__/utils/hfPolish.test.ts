@@ -1,9 +1,23 @@
 import {
   describePolishFailure,
   HfPolishError,
+  POLISH_MODELS,
   polishTranscript,
   splitIntoBlocks,
 } from '@/utils/hfPolish';
+
+function errorResponse(status: number): Response {
+  return {
+    ok: false,
+    status,
+    text: () => Promise.resolve(`http ${status}`),
+  } as unknown as Response;
+}
+
+/** What the browser surfaces when a 503 comes back without CORS headers. */
+function corsBlockedFetch(): never {
+  throw new TypeError('Failed to fetch');
+}
 
 function chatResponse(content: string, finishReason = 'stop'): Response {
   return {
@@ -26,7 +40,7 @@ describe('polishTranscript', () => {
     expect(init.method).toBe('POST');
     expect(init.headers.Authorization).toBe('Bearer hf_x');
     const body = JSON.parse(init.body);
-    expect(body.model).toBe('Qwen/Qwen2.5-7B-Instruct');
+    expect(body.model).toBe(POLISH_MODELS[0]);
     expect(body.temperature).toBeCloseTo(0.2);
     expect(body.messages).toHaveLength(2);
     expect(body.messages[0].role).toBe('system');
@@ -142,6 +156,78 @@ describe('polishTranscript', () => {
   });
 });
 
+// A single hardcoded model dies whenever that model/provider is unavailable to the
+// account (HF answers 503, and its 503 path omits CORS headers -> opaque TypeError).
+describe('model fallback ladder', () => {
+  it('advertises more than one candidate, cheapest-capable first', () => {
+    expect(POLISH_MODELS.length).toBeGreaterThan(1);
+    expect(new Set(POLISH_MODELS).size).toBe(POLISH_MODELS.length);
+    // Reasoning variants emit chain-of-thought and would violate "reply with ONLY the text".
+    for (const model of POLISH_MODELS) expect(model).not.toMatch(/thinking/i);
+  });
+
+  it('advances to the next model on a 503', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce(errorResponse(503))
+      .mockResolvedValueOnce(chatResponse('Polished text here.'));
+
+    const result = await polishTranscript('polished text here', { token: 'hf_x', fetchImpl });
+
+    expect(result).toBe('Polished text here.');
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body).model).toBe(POLISH_MODELS[0]);
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body).model).toBe(POLISH_MODELS[1]);
+  });
+
+  it('advances on an opaque CORS-blocked failure', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockImplementationOnce(corsBlockedFetch)
+      .mockResolvedValueOnce(chatResponse('Polished text here.'));
+
+    await expect(
+      polishTranscript('polished text here', { token: 'hf_x', fetchImpl })
+    ).resolves.toBe('Polished text here.');
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('pins the working model for later blocks instead of re-probing', async () => {
+    const sentenceA = `${'a'.repeat(2500)}.`;
+    const sentenceB = `${'b'.repeat(2500)}.`;
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce(errorResponse(503))
+      .mockResolvedValueOnce(chatResponse(`${'A'.repeat(2500)}.`))
+      .mockResolvedValueOnce(chatResponse(`${'B'.repeat(2500)}.`));
+
+    await polishTranscript(`${sentenceA} ${sentenceB}`, { token: 'hf_x', fetchImpl });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    // Block 2 goes straight to the model that worked — no repeat of the dead one.
+    expect(JSON.parse(fetchImpl.mock.calls[2][1].body).model).toBe(POLISH_MODELS[1]);
+  });
+
+  it('throws once every candidate is exhausted, reporting the last status', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(errorResponse(503));
+
+    await expect(
+      polishTranscript('some text', { token: 'hf_x', fetchImpl })
+    ).rejects.toMatchObject({ name: 'HfPolishError', status: 503 });
+    expect(fetchImpl).toHaveBeenCalledTimes(POLISH_MODELS.length);
+  });
+
+  // A bad token or an exhausted quota fails identically on every model — burning the
+  // whole ladder just delays the notice.
+  it.each([401, 403, 429])('does not retry other models on %s', async (status) => {
+    const fetchImpl = jest.fn().mockResolvedValue(errorResponse(status));
+
+    await expect(
+      polishTranscript('some text', { token: 'hf_x', fetchImpl })
+    ).rejects.toMatchObject({ status });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('splitIntoBlocks', () => {
   it('returns short text as a single block', () => {
     expect(splitIntoBlocks('one sentence.')).toEqual(['one sentence.']);
@@ -230,8 +316,11 @@ describe('describePolishFailure', () => {
     expect(describePolishFailure(new HfPolishError('boom', 503))).toMatch(/unavailable|loading/i);
   });
 
-  it('explains a status-less failure as a connection problem', () => {
-    expect(describePolishFailure(new TypeError('Failed to fetch'))).toMatch(/reach|network|connect/i);
+  it('explains a status-less failure as unreachable or blocked, not merely offline', () => {
+    const message = describePolishFailure(new TypeError('Failed to fetch'));
+    expect(message).toMatch(/reach|network|connect/i);
+    // The observed real-world cause is a CORS-stripped 503, not a dead connection.
+    expect(message).toMatch(/unavailable|blocked/i);
   });
 
   it('always states that the transcript was left unpolished', () => {

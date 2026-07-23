@@ -1,10 +1,34 @@
 const HF_CHAT_ENDPOINT = 'https://router.huggingface.co/v1/chat/completions';
 
 /**
- * Free-tier instruct model on the HF Inference Providers router. Chosen for speed,
- * multilingual coverage, and constraint-following at its size — swap here if it degrades.
+ * Model fallback ladder, mirroring the FFmpeg command ladder and the Whisper device ladder:
+ * try each in order until one answers, then pin it for the rest of the transcript.
+ *
+ * A single hardcoded model is fragile — HF Inference Providers routes to third parties, and a
+ * model can be unavailable to a given account (no credits left, provider down, provider not
+ * enabled). The router answers 503 for that, and its 503 path omits CORS headers, so the browser
+ * reports an opaque `TypeError: Failed to fetch` with no status. The ladder is what makes the
+ * feature survive that.
+ *
+ * Ordering is cheapest-capable first — HF's "free" tier is a small monthly credit allowance, so
+ * price per token decides how long polish keeps working, not whether it works at all. All three
+ * are instruction-tuned, multilingual, and non-reasoning (a "thinking" variant would emit
+ * chain-of-thought and violate the reply-with-only-the-text constraint).
  */
-const MODEL = 'Qwen/Qwen2.5-7B-Instruct';
+export const POLISH_MODELS = [
+  'Qwen/Qwen3-4B-Instruct-2507', // ~$0.01/$0.03 per M tokens
+  'meta-llama/Llama-3.1-8B-Instruct', // ~$0.02/$0.05
+  'google/gemma-3-4b-it', // ~$0.05/$0.10
+] as const;
+
+/**
+ * Statuses that mean "this model/provider won't serve you" — worth trying the next candidate.
+ * 401/403 (bad token) and 429 (quota) fail identically on every model, so they abort the ladder.
+ */
+function isModelUnavailable(status: number | undefined): boolean {
+  if (status === undefined) return true; // opaque failure: CORS-stripped 503, DNS, offline
+  return status === 400 || status === 404 || status === 422 || status >= 500;
+}
 
 /** Max characters per request. Keeps each block inside a small model's reliable context. */
 const BLOCK_BUDGET = 3500;
@@ -69,7 +93,10 @@ export function describePolishFailure(error: unknown): string {
   } else if (status !== undefined) {
     cause = `AI cleanup request failed (HTTP ${status}).`;
   } else {
-    cause = 'Could not reach Hugging Face for AI cleanup — check your network connection.';
+    // No status means no readable response: offline, or (commonly) an HF error response
+    // returned without CORS headers, which the browser hides behind an opaque failure.
+    cause =
+      'Could not reach Hugging Face for AI cleanup — the service may be unavailable, or the request was blocked. Check your network connection.';
   }
 
   return `${cause} The transcript was left unpolished.`;
@@ -125,6 +152,65 @@ export function splitIntoBlocks(text: string): string[] {
 }
 
 /**
+ * Sends one block to one model. Throws HfPolishError (with the HTTP status when there was a
+ * response) so the caller can decide between advancing the ladder and giving up.
+ */
+async function requestPolish(
+  model: string,
+  body: string,
+  token: string,
+  doFetch: typeof fetch
+): Promise<ChatCompletionResponse> {
+  let response: Response;
+  try {
+    response = await doFetch(HF_CHAT_ENDPOINT, {
+      method: 'POST',
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.2,
+        // Corrected text is roughly input-sized. Budget ~1 token per char so non-Latin
+        // scripts (CJK ≈ 1 token/char) are not silently truncated by the cap.
+        max_tokens: Math.min(4096, body.length + 128),
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user', content: body },
+        ],
+      }),
+    });
+  } catch (networkError) {
+    // No response at all: offline, DNS, timeout, or a CORS-blocked error response
+    // (the router's 503 path omits CORS headers, which hides the status from us).
+    throw new HfPolishError(
+      `HF polish request to ${model} could not complete: ${
+        networkError instanceof Error ? networkError.message : String(networkError)
+      }`
+    );
+  }
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new HfPolishError(
+      `HF polish request to ${model} failed (${response.status}). ${detail}`.trim(),
+      response.status
+    );
+  }
+
+  try {
+    return (await response.json()) as ChatCompletionResponse;
+  } catch {
+    throw new HfPolishError(
+      `HF polish returned malformed JSON (${response.status}).`,
+      response.status
+    );
+  }
+}
+
+/**
  * Polishes a transcript via the HF-hosted chat model, block by block in sequence.
  * Returns the corrected text; a block whose model output fails the sanity guardrail keeps
  * its raw text, and blocks are rejoined with '' (they carry their own whitespace) so the
@@ -135,6 +221,8 @@ export async function polishTranscript(text: string, options: PolishOptions): Pr
   const doFetch = options.fetchImpl ?? fetch;
   const blocks = splitIntoBlocks(text);
 
+  /** Index into POLISH_MODELS; advances past candidates this account cannot reach. */
+  let modelIndex = 0;
   const polished: string[] = [];
   for (let i = 0; i < blocks.length; i++) {
     const block = blocks[i];
@@ -151,43 +239,27 @@ export async function polishTranscript(text: string, options: PolishOptions): Pr
     const lead = block.slice(0, block.indexOf(body));
     const trail = block.slice(lead.length + body.length);
 
-    const response = await doFetch(HF_CHAT_ENDPOINT, {
-      method: 'POST',
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      headers: {
-        Authorization: `Bearer ${options.token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        temperature: 0.2,
-        // Corrected text is roughly input-sized. Budget ~1 token per char so non-Latin
-        // scripts (CJK ≈ 1 token/char) are not silently truncated by the cap.
-        max_tokens: Math.min(4096, body.length + 128),
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: body },
-        ],
-      }),
-    });
-
-    if (!response.ok) {
-      const detail = await response.text().catch(() => '');
-      throw new HfPolishError(
-        `HF polish request failed (${response.status}). ${detail}`.trim(),
-        response.status
-      );
+    // Walk the ladder from the pinned model. A candidate that answers is pinned for every
+    // later block, so the dead ones are probed once per transcript, not once per block.
+    let data: ChatCompletionResponse | null = null;
+    let lastError: HfPolishError | null = null;
+    for (let m = modelIndex; m < POLISH_MODELS.length; m++) {
+      try {
+        data = await requestPolish(POLISH_MODELS[m], body, options.token, doFetch);
+        modelIndex = m;
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error instanceof HfPolishError ? error : new HfPolishError(String(error));
+        if (!isModelUnavailable(lastError.status)) break;
+        console.warn(
+          `[VideoConverter] polish model ${POLISH_MODELS[m]} unavailable; trying next:`,
+          lastError.message
+        );
+      }
     }
+    if (!data) throw lastError ?? new HfPolishError('HF polish failed.');
 
-    let data: ChatCompletionResponse;
-    try {
-      data = (await response.json()) as ChatCompletionResponse;
-    } catch {
-      throw new HfPolishError(
-        `HF polish returned malformed JSON (${response.status}).`,
-        response.status
-      );
-    }
     const choice = data.choices?.[0];
     const candidate = (choice?.message?.content ?? '').trim();
 
