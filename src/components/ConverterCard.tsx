@@ -19,11 +19,14 @@ import {
   Checkbox,
   TextField,
   Link,
+  Alert,
 } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import VideoLibraryIcon from '@mui/icons-material/VideoLibrary';
+import CloudOffIcon from '@mui/icons-material/CloudOff';
+import AutoFixOffIcon from '@mui/icons-material/AutoFixOff';
 import FileDropZone from './FileDropZone';
 import FormatSelector from './FormatSelector';
 import CropSelector from './CropSelector';
@@ -318,8 +321,9 @@ export default function ConverterCard() {
                       token
                     </Link>
                     , transcription runs on Hugging Face&rsquo;s hosted whisper-large-v3 for higher
-                    accuracy — this uploads your audio to Hugging Face. Leave blank to keep everything
-                    on-device. Falls back to on-device automatically if the hosted call fails.
+                    accuracy, and the finished transcript is sent to a hosted AI model for cleanup —
+                    this uploads your audio and transcript text to Hugging Face. Leave blank to keep
+                    everything on-device. Falls back to on-device automatically if a hosted call fails.
                   </>
                 }
               />
@@ -333,6 +337,33 @@ export default function ConverterCard() {
               onCustomCropChange={updateCustomCrop}
               disabled={isActive}
             />
+          )}
+
+          {/* Non-blocking: hosted transcription degraded to on-device. The job continues, so this
+              is a warning banner rather than an error state or a dialog. */}
+          {isTranscriptionMode && job.hostedTranscriptionNotice && (
+            <Alert
+              severity="warning"
+              variant="outlined"
+              icon={<CloudOffIcon fontSize="inherit" />}
+              data-testid="hosted-transcription-notice"
+              sx={{ mt: 3, borderRadius: 2, alignItems: 'center' }}
+            >
+              {job.hostedTranscriptionNotice}
+            </Alert>
+          )}
+
+          {/* Non-blocking: AI polish failed, raw transcript kept. Mirrors the hosted notice. */}
+          {isTranscriptionMode && job.polishNotice && (
+            <Alert
+              severity="warning"
+              variant="outlined"
+              icon={<AutoFixOffIcon fontSize="inherit" />}
+              data-testid="transcript-polish-notice"
+              sx={{ mt: 3, borderRadius: 2, alignItems: 'center' }}
+            >
+              {job.polishNotice}
+            </Alert>
           )}
 
           <ConversionProgress status={job.status} progress={job.progress} />

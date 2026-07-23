@@ -58,4 +58,14 @@ export interface ConversionJob {
   transcriptionTranslate: boolean;
   transcriptText: string | null;
   transcriptChunks: TranscriptChunk[] | null;
+  /**
+   * Non-fatal warning shown when hosted (Hugging Face) transcription failed and the local
+   * worker took over. Never blocks the job — the transcript still completes.
+   */
+  hostedTranscriptionNotice: string | null;
+  /**
+   * Non-fatal warning shown when the AI polish pass failed and the transcript was left
+   * unpolished. Mirrors hostedTranscriptionNotice semantics.
+   */
+  polishNotice: string | null;
 }

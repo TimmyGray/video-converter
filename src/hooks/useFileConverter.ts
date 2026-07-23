@@ -14,7 +14,8 @@ import { useTranscriber } from '@/hooks/useTranscriber';
 import { getFormatInfo, getOutputFileName, isValidSourceFile } from '@/utils/formatUtils';
 import { decodeWavToPcm16k } from '@/utils/audioUtils';
 import { getHfToken } from '@/utils/hfToken';
-import { transcribeViaHf } from '@/utils/hfTranscribe';
+import { describeHfFailure, transcribeViaHf } from '@/utils/hfTranscribe';
+import { describePolishFailure, polishTranscript } from '@/utils/hfPolish';
 import { serializeTranscript } from '@/utils/subtitleUtils';
 
 const TRANSCRIPT_FORMATS: TranscriptFormat[] = ['txt', 'srt', 'vtt'];
@@ -95,12 +96,17 @@ const initialJob: ConversionJob = {
   transcriptionTranslate: false,
   transcriptText: null,
   transcriptChunks: null,
+  hostedTranscriptionNotice: null,
+  polishNotice: null,
 };
 
 export function useFileConverter(): UseFileConverterReturn {
   const [job, setJob] = useState<ConversionJob>(initialJob);
   const lastVideoFormatRef = useRef<VideoFormat>('mp4');
   const lastTranscriptFormatRef = useRef<TranscriptFormat>('txt');
+  // Incremented on reset (and each run start) so an in-flight conversion whose run was
+  // invalidated can detect it and stop writing state for a job that no longer exists.
+  const runIdRef = useRef(0);
   const { isLoaded, isLoading, loadError, ffmpegMode, loadFFmpeg, transcode, extractPcmWav } = useFFmpeg();
   const { transcribe } = useTranscriber();
 
@@ -150,6 +156,9 @@ export function useFileConverter(): UseFileConverterReturn {
         transcriptText: null,
         transcriptChunks: null,
         errorMessage: null,
+        // Notices describe the invalidated run; they must not reappear beside a fresh idle card.
+        hostedTranscriptionNotice: null,
+        polishNotice: null,
       };
     });
   }, []);
@@ -217,6 +226,9 @@ export function useFileConverter(): UseFileConverterReturn {
   const startConversion = useCallback(async () => {
     if (!job.file || !isValidSourceFile(job.file, job.conversionMode)) return;
 
+    const runId = ++runIdRef.current;
+    const isStale = () => runIdRef.current !== runId;
+
     setJob((prev) => ({
       ...prev,
       status: 'loading',
@@ -229,6 +241,8 @@ export function useFileConverter(): UseFileConverterReturn {
       errorMessage: null,
       transcriptText: null,
       transcriptChunks: null,
+      hostedTranscriptionNotice: null,
+      polishNotice: null,
     }));
 
     try {
@@ -240,14 +254,27 @@ export function useFileConverter(): UseFileConverterReturn {
       const conversionStart = performance.now();
 
       if (job.conversionMode === 'transcription') {
-        // 1. Normalize to 16 kHz mono WAV via FFmpeg (0–15% of the bar).
+        const hfToken = getHfToken();
+        const online = typeof navigator === 'undefined' || navigator.onLine !== false;
+        // AI polish runs after transcription whenever a token is set and we're online.
+        // When it will run, the transcription phases compress into 0–90% of the bar
+        // (scaled by 0.9) and polish takes 90–100 — the bar never moves backwards.
+        const willPolish = Boolean(hfToken) && online;
+        const setProgress = (value: number) => {
+          if (isStale()) return;
+          setJob((prev) => ({ ...prev, progress: Math.round(willPolish ? value * 0.9 : value) }));
+        };
+
+        // 1. Normalize to 16 kHz mono WAV via FFmpeg (0–15% of the transcription span).
         const wavBlob = await extractPcmWav(job.file, (progress: number) =>
-          setJob((prev) => ({ ...prev, progress: Math.round(progress * 0.15) }))
+          setProgress(progress * 0.15)
         );
+        if (isStale()) return;
 
         // 2. Decode to a Float32 waveform Whisper can consume.
-        setJob((prev) => ({ ...prev, progress: 15 }));
+        setProgress(15);
         const pcm = await decodeWavToPcm16k(wavBlob);
+        if (isStale()) return;
 
         // Fill the transcript panel block-by-block. Guarded on 'converting' so a late
         // message cannot resurrect text after reset/error/completion.
@@ -261,15 +288,11 @@ export function useFileConverter(): UseFileConverterReturn {
           transcribe(pcm, {
             language: job.transcriptionLanguage,
             translate: job.transcriptionTranslate,
-            onModelProgress: (percent: number) =>
-              setJob((prev) => ({ ...prev, progress: 15 + Math.round(percent * 0.65) })),
-            onTranscribeProgress: (percent: number) =>
-              setJob((prev) => ({ ...prev, progress: 80 + Math.round(percent * 0.2) })),
+            onModelProgress: (percent: number) => setProgress(15 + percent * 0.65),
+            onTranscribeProgress: (percent: number) => setProgress(80 + percent * 0.2),
             onPartialText,
           });
 
-        const hfToken = getHfToken();
-        const online = typeof navigator === 'undefined' || navigator.onLine !== false;
         const useHosted = Boolean(hfToken) && online && !job.transcriptionTranslate;
 
         let result: { text: string; chunks: TranscriptChunk[] };
@@ -278,20 +301,58 @@ export function useFileConverter(): UseFileConverterReturn {
             result = await transcribeViaHf(pcm, {
               token: hfToken,
               onPartialText,
-              onProgress: (percent: number) =>
-                setJob((prev) => ({ ...prev, progress: 15 + Math.round(percent * 0.85) })),
+              onProgress: (percent: number) => setProgress(15 + percent * 0.85),
             });
           } catch (hostedError) {
+            // The run may have been reset while the hosted request was in flight; the dead
+            // job gets no notice and no local fallback.
+            if (isStale()) return;
             console.warn(
               '[VideoConverter] HF hosted transcription failed; falling back to local worker:',
               hostedError
             );
+            // Surface the reason immediately — before the local run starts — so the user sees why
+            // the run restarted on-device. Purely informational: the job keeps going.
+            // Progress rewinds to the post-decode mark because runLocal re-does the whole waveform,
+            // and any partial hosted text is dropped so the panel does not mix the two engines.
+            const notice = describeHfFailure(hostedError);
+            setJob((prev) => ({
+              ...prev,
+              hostedTranscriptionNotice: notice,
+              transcriptText: null,
+            }));
+            setProgress(15);
             result = await runLocal();
           }
         } else {
           result = await runLocal();
         }
-        const { text, chunks } = result;
+        if (isStale()) return;
+        const { text: rawText, chunks } = result;
+
+        // 4. AI polish (90–100%): best-effort cleanup of the plain text via the HF-hosted
+        //    chat model. Only the panel/txt output changes — chunks (srt/vtt) stay raw.
+        //    Any failure keeps the raw text and surfaces a non-blocking notice.
+        let text = rawText;
+        if (willPolish && rawText.trim()) {
+          try {
+            text = await polishTranscript(rawText, {
+              token: hfToken,
+              onProgress: (percent: number) => {
+                if (isStale()) return;
+                setJob((prev) => ({ ...prev, progress: 90 + Math.round(percent * 0.1) }));
+              },
+            });
+            if (isStale()) return;
+            setJob((prev) => ({ ...prev, transcriptText: text }));
+          } catch (polishError) {
+            if (isStale()) return;
+            console.warn('[VideoConverter] AI transcript polish failed; keeping raw text:', polishError);
+            const notice = describePolishFailure(polishError);
+            setJob((prev) => ({ ...prev, polishNotice: notice }));
+          }
+        }
+        if (isStale()) return;
 
         const transcriptFormat: TranscriptFormat = isTranscriptFormat(job.outputFormat)
           ? job.outputFormat
@@ -347,7 +408,7 @@ export function useFileConverter(): UseFileConverterReturn {
           message = 'Conversion failed. Please try a different file or format.';
         }
       }
-      setJob((prev) => ({ ...prev, status: 'error', errorMessage: message }));
+      if (!isStale()) setJob((prev) => ({ ...prev, status: 'error', errorMessage: message }));
     }
   }, [
     job.file,
@@ -365,6 +426,7 @@ export function useFileConverter(): UseFileConverterReturn {
   ]);
 
   const reset = useCallback(() => {
+    runIdRef.current += 1;
     if (job.outputUrl) URL.revokeObjectURL(job.outputUrl);
     lastVideoFormatRef.current = 'mp4';
     lastTranscriptFormatRef.current = 'txt';

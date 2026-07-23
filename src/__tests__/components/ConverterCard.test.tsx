@@ -88,6 +88,8 @@ function createJob(overrides: Partial<ConversionJob> = {}): ConversionJob {
     transcriptionTranslate: false,
     transcriptText: null,
     transcriptChunks: null,
+    hostedTranscriptionNotice: null,
+    polishNotice: null,
     ...overrides,
   };
 }
@@ -269,6 +271,105 @@ describe('ConverterCard', () => {
       expect(screen.getByTestId('transcript-panel')).toBeInTheDocument();
       expect(screen.getByTestId('transcript-text')).toHaveTextContent('Hello there, world.');
       expect(screen.getByTestId('copy-transcript-button')).toBeInTheDocument();
+    });
+
+    // AC4: the notice informs without interrupting — it renders alongside a still-running job
+    // and never replaces the progress, transcript, or action controls.
+    it('renders the hosted-transcription notice while transcription is still running', () => {
+      mockConverterState(
+        createJob({
+          conversionMode: 'transcription',
+          outputFormat: 'txt',
+          status: 'converting',
+          progress: 42,
+          hostedTranscriptionNotice: 'Hugging Face rejected your token. Continuing on-device.',
+        })
+      );
+
+      render(<ConverterCard />);
+
+      const notice = screen.getByTestId('hosted-transcription-notice');
+      expect(notice).toHaveTextContent(/rejected your token/i);
+      expect(screen.getByTestId('conversion-progress-mock')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /transcribing/i })).toBeInTheDocument();
+    });
+
+    it('keeps the hosted-transcription notice visible after the job completes', () => {
+      mockConverterState(
+        createJob({
+          conversionMode: 'transcription',
+          outputFormat: 'txt',
+          status: 'done',
+          transcriptText: 'Hello there, world.',
+          outputUrl: 'blob:transcript',
+          outputFileName: 'clip.txt',
+          hostedTranscriptionNotice: 'Could not reach Hugging Face. Transcribed on-device.',
+        })
+      );
+
+      render(<ConverterCard />);
+
+      expect(screen.getByTestId('hosted-transcription-notice')).toHaveTextContent(/on-device/i);
+      expect(screen.getByTestId('transcript-text')).toHaveTextContent('Hello there, world.');
+    });
+
+    it('hides the notice when there is nothing to report', () => {
+      mockConverterState(
+        createJob({ conversionMode: 'transcription', outputFormat: 'txt', status: 'done' })
+      );
+
+      render(<ConverterCard />);
+
+      expect(screen.queryByTestId('hosted-transcription-notice')).not.toBeInTheDocument();
+    });
+
+    // Polish notice mirrors the hosted notice: informational, never gating the transcript.
+    it('renders the polish notice alongside the finished transcript', () => {
+      mockConverterState(
+        createJob({
+          conversionMode: 'transcription',
+          outputFormat: 'txt',
+          status: 'done',
+          transcriptText: 'raw transcript text',
+          outputUrl: 'blob:transcript',
+          outputFileName: 'clip.txt',
+          polishNotice: 'Rate limit reached. The transcript was left unpolished.',
+        })
+      );
+
+      render(<ConverterCard />);
+
+      expect(screen.getByTestId('transcript-polish-notice')).toHaveTextContent(/unpolished/i);
+      expect(screen.getByTestId('transcript-text')).toHaveTextContent('raw transcript text');
+      expect(screen.getByRole('button', { name: /save clip\.txt/i })).toBeInTheDocument();
+    });
+
+    it('can show hosted and polish notices at the same time', () => {
+      mockConverterState(
+        createJob({
+          conversionMode: 'transcription',
+          outputFormat: 'txt',
+          status: 'done',
+          transcriptText: 'raw transcript text',
+          hostedTranscriptionNotice: 'Hosted transcription failed. Transcribed on-device.',
+          polishNotice: 'AI cleanup failed. The transcript was left unpolished.',
+        })
+      );
+
+      render(<ConverterCard />);
+
+      expect(screen.getByTestId('hosted-transcription-notice')).toBeInTheDocument();
+      expect(screen.getByTestId('transcript-polish-notice')).toBeInTheDocument();
+    });
+
+    it('hides the polish notice when null', () => {
+      mockConverterState(
+        createJob({ conversionMode: 'transcription', outputFormat: 'txt', status: 'done' })
+      );
+
+      render(<ConverterCard />);
+
+      expect(screen.queryByTestId('transcript-polish-notice')).not.toBeInTheDocument();
     });
   });
 });

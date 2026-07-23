@@ -45,8 +45,19 @@ jest.mock('@/utils/hfToken', () => ({
 }));
 
 const mockTranscribeViaHf = jest.fn();
+const mockDescribeHfFailure = jest.fn(
+  (error: unknown) => `described: ${error instanceof Error ? error.message : String(error)}`
+);
 jest.mock('@/utils/hfTranscribe', () => ({
   transcribeViaHf: (...args: unknown[]) => mockTranscribeViaHf(...args),
+  describeHfFailure: (error: unknown) => mockDescribeHfFailure(error),
+}));
+
+const mockPolishTranscript = jest.fn();
+jest.mock('@/utils/hfPolish', () => ({
+  polishTranscript: (...args: unknown[]) => mockPolishTranscript(...args),
+  describePolishFailure: (error: unknown) =>
+    `polish-described: ${error instanceof Error ? error.message : String(error)}`,
 }));
 
 beforeAll(() => {
@@ -62,6 +73,8 @@ describe('useFileConverter', () => {
       text: 'hosted text',
       chunks: [{ text: 'hosted text', timestamp: [0, 1] }],
     });
+    // Passthrough by default so polish-agnostic tests keep their assertions; polish tests override.
+    mockPolishTranscript.mockImplementation(async (text: string) => text);
   });
 
   it('initialises with default state', () => {
@@ -287,6 +300,240 @@ describe('useFileConverter', () => {
     expect(mockTranscribe).toHaveBeenCalled();
     expect(result.current.job.transcriptText).toBe('hello world');
     expect(result.current.job.status).toBe('done');
+  });
+
+  // AC3: the fallback must be announced, not silent — and must not interrupt the run.
+  it('records a hosted-transcription notice when hosted fails, without failing the job', async () => {
+    mockGetHfToken.mockReturnValue('hf_x');
+    mockTranscribeViaHf.mockRejectedValueOnce(new Error('CORS blocked'));
+
+    const { result } = renderHook(() => useFileConverter());
+    const file = new File([''], 'lecture.mp4', { type: 'video/mp4' });
+    act(() => result.current.selectFile(file));
+    act(() => result.current.selectConversionMode('transcription'));
+
+    await act(async () => {
+      await result.current.startConversion();
+    });
+
+    expect(result.current.job.hostedTranscriptionNotice).toBe('described: CORS blocked');
+    expect(result.current.job.status).toBe('done');
+    expect(result.current.job.errorMessage).toBeNull();
+    expect(result.current.job.transcriptText).toBe('hello world');
+  });
+
+  // The notice is published *before* the local worker is awaited, so it is visible for the whole
+  // fallback run instead of appearing only once the job completes.
+  it('publishes the notice before the local fallback starts', async () => {
+    mockGetHfToken.mockReturnValue('hf_x');
+    mockTranscribeViaHf.mockRejectedValueOnce(new Error('CORS blocked'));
+
+    const { result } = renderHook(() => useFileConverter());
+    const file = new File([''], 'lecture.mp4', { type: 'video/mp4' });
+    act(() => result.current.selectFile(file));
+    act(() => result.current.selectConversionMode('transcription'));
+
+    await act(async () => {
+      await result.current.startConversion();
+    });
+
+    expect(mockDescribeHfFailure).toHaveBeenCalledWith(expect.any(Error));
+    expect(mockDescribeHfFailure.mock.invocationCallOrder[0]).toBeLessThan(
+      mockTranscribe.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('leaves the notice null when hosted transcription succeeds', async () => {
+    mockGetHfToken.mockReturnValue('hf_x');
+
+    const { result } = renderHook(() => useFileConverter());
+    const file = new File([''], 'lecture.mp4', { type: 'video/mp4' });
+    act(() => result.current.selectFile(file));
+    act(() => result.current.selectConversionMode('transcription'));
+
+    await act(async () => {
+      await result.current.startConversion();
+    });
+
+    expect(result.current.job.hostedTranscriptionNotice).toBeNull();
+  });
+
+  it('clears a stale notice when a new conversion starts and on reset', async () => {
+    mockGetHfToken.mockReturnValue('hf_x');
+    mockTranscribeViaHf.mockRejectedValueOnce(new Error('CORS blocked'));
+
+    const { result } = renderHook(() => useFileConverter());
+    const file = new File([''], 'lecture.mp4', { type: 'video/mp4' });
+    act(() => result.current.selectFile(file));
+    act(() => result.current.selectConversionMode('transcription'));
+
+    await act(async () => {
+      await result.current.startConversion();
+    });
+    expect(result.current.job.hostedTranscriptionNotice).toBe('described: CORS blocked');
+
+    // Second run succeeds via hosted -> stale notice must not linger.
+    await act(async () => {
+      await result.current.startConversion();
+    });
+    expect(result.current.job.hostedTranscriptionNotice).toBeNull();
+
+    act(() => result.current.reset());
+    expect(result.current.job.hostedTranscriptionNotice).toBeNull();
+  });
+
+  describe('AI transcript polish', () => {
+    const startTranscription = async (result: {
+      current: ReturnType<typeof useFileConverter>;
+    }) => {
+      const file = new File([''], 'lecture.mp4', { type: 'video/mp4' });
+      act(() => result.current.selectFile(file));
+      act(() => result.current.selectConversionMode('transcription'));
+      await act(async () => {
+        await result.current.startConversion();
+      });
+    };
+
+    it('polishes the transcript when a token is set and replaces the plain text only', async () => {
+      mockGetHfToken.mockReturnValue('hf_x');
+      mockPolishTranscript.mockResolvedValue('Polished, correct text.');
+
+      const { result } = renderHook(() => useFileConverter());
+      await startTranscription(result);
+
+      expect(mockPolishTranscript).toHaveBeenCalledWith(
+        'hosted text',
+        expect.objectContaining({ token: 'hf_x' })
+      );
+      expect(result.current.job.transcriptText).toBe('Polished, correct text.');
+      // Timestamped chunks (srt/vtt source) must stay raw.
+      expect(result.current.job.transcriptChunks).toEqual([
+        { text: 'hosted text', timestamp: [0, 1] },
+      ]);
+      expect(result.current.job.status).toBe('done');
+      expect(result.current.job.progress).toBe(100);
+      expect(result.current.job.polishNotice).toBeNull();
+    });
+
+    it('never attempts polish without a token', async () => {
+      const { result } = renderHook(() => useFileConverter());
+      await startTranscription(result);
+
+      expect(mockPolishTranscript).not.toHaveBeenCalled();
+      expect(result.current.job.polishNotice).toBeNull();
+    });
+
+    it('skips polish for an empty transcript', async () => {
+      mockGetHfToken.mockReturnValue('hf_x');
+      mockTranscribeViaHf.mockResolvedValue({ text: '', chunks: [] });
+
+      const { result } = renderHook(() => useFileConverter());
+      await startTranscription(result);
+
+      expect(mockPolishTranscript).not.toHaveBeenCalled();
+      expect(result.current.job.status).toBe('done');
+    });
+
+    it('keeps the raw transcript and sets a notice when polish fails, still completing', async () => {
+      mockGetHfToken.mockReturnValue('hf_x');
+      mockPolishTranscript.mockRejectedValue(new Error('HTTP 429'));
+
+      const { result } = renderHook(() => useFileConverter());
+      await startTranscription(result);
+
+      expect(result.current.job.status).toBe('done');
+      expect(result.current.job.errorMessage).toBeNull();
+      expect(result.current.job.transcriptText).toBe('hosted text');
+      expect(result.current.job.polishNotice).toBe('polish-described: HTTP 429');
+      expect(result.current.job.progress).toBe(100);
+    });
+
+    it('polishes after a hosted-transcription fallback too', async () => {
+      mockGetHfToken.mockReturnValue('hf_x');
+      mockTranscribeViaHf.mockRejectedValueOnce(new Error('CORS blocked'));
+      mockPolishTranscript.mockResolvedValue('Polished local text.');
+
+      const { result } = renderHook(() => useFileConverter());
+      await startTranscription(result);
+
+      // Local worker produced 'hello world'; polish runs on that.
+      expect(mockPolishTranscript).toHaveBeenCalledWith(
+        'hello world',
+        expect.objectContaining({ token: 'hf_x' })
+      );
+      expect(result.current.job.transcriptText).toBe('Polished local text.');
+    });
+
+    it('clears both notices when switching conversion mode', async () => {
+      mockGetHfToken.mockReturnValue('hf_x');
+      mockTranscribeViaHf.mockRejectedValueOnce(new Error('CORS blocked'));
+      mockPolishTranscript.mockRejectedValueOnce(new Error('boom'));
+
+      const { result } = renderHook(() => useFileConverter());
+      await startTranscription(result);
+      expect(result.current.job.hostedTranscriptionNotice).not.toBeNull();
+      expect(result.current.job.polishNotice).not.toBeNull();
+
+      // Round-trip through video mode: notices belong to a job that no longer exists.
+      act(() => result.current.selectConversionMode('video'));
+      act(() => result.current.selectConversionMode('transcription'));
+
+      expect(result.current.job.hostedTranscriptionNotice).toBeNull();
+      expect(result.current.job.polishNotice).toBeNull();
+    });
+
+    // Reset during an in-flight await must not let late writes resurrect the job.
+    it('does not resurrect a reset job when polish settles afterwards', async () => {
+      mockGetHfToken.mockReturnValue('hf_x');
+      const { result } = renderHook(() => useFileConverter());
+
+      mockPolishTranscript.mockImplementationOnce(async () => {
+        // User hits Reset while the polish request is in flight, then the request fails.
+        result.current.reset();
+        throw new Error('late failure');
+      });
+
+      await startTranscription(result);
+
+      expect(result.current.job.status).toBe('idle');
+      expect(result.current.job.polishNotice).toBeNull();
+      expect(result.current.job.transcriptText).toBeNull();
+      expect(result.current.job.outputUrl).toBeNull();
+    });
+
+    it('does not stamp a hosted-fallback notice onto a reset job', async () => {
+      mockGetHfToken.mockReturnValue('hf_x');
+      const { result } = renderHook(() => useFileConverter());
+
+      mockTranscribeViaHf.mockImplementationOnce(async () => {
+        result.current.reset();
+        throw new Error('late CORS failure');
+      });
+
+      await startTranscription(result);
+
+      expect(result.current.job.status).toBe('idle');
+      expect(result.current.job.hostedTranscriptionNotice).toBeNull();
+      // The local fallback must not have run for the dead job either.
+      expect(mockTranscribe).not.toHaveBeenCalled();
+    });
+
+    it('clears a stale polish notice on the next run and on reset', async () => {
+      mockGetHfToken.mockReturnValue('hf_x');
+      mockPolishTranscript.mockRejectedValueOnce(new Error('boom'));
+
+      const { result } = renderHook(() => useFileConverter());
+      await startTranscription(result);
+      expect(result.current.job.polishNotice).toBe('polish-described: boom');
+
+      await act(async () => {
+        await result.current.startConversion();
+      });
+      expect(result.current.job.polishNotice).toBeNull();
+
+      act(() => result.current.reset());
+      expect(result.current.job.polishNotice).toBeNull();
+    });
   });
 
   it('uses the local worker when no token is set', async () => {

@@ -19,6 +19,47 @@ interface HfResponse {
   chunks?: Array<{ text: string; timestamp: [number, number | null] }>;
 }
 
+/**
+ * Hosted-transcription failure carrying the HTTP status when one was received.
+ * `status` is undefined for network/CORS/parse failures, which never reach a response.
+ */
+export class HfTranscribeError extends Error {
+  readonly status?: number;
+
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = 'HfTranscribeError';
+    this.status = status;
+  }
+}
+
+// Deliberately model-name-free: the local worker's model has drifted before (base → small)
+// and a hardcoded name here silently lies when it drifts again.
+const FALLBACK_SUFFIX = 'Transcribed with the on-device model instead (lower accuracy).';
+
+/**
+ * Maps a hosted-transcription failure to a single user-facing sentence explaining what went
+ * wrong and that the local fallback took over. Pure — safe to unit test and to call from render.
+ */
+export function describeHfFailure(error: unknown): string {
+  const status = error instanceof HfTranscribeError ? error.status : undefined;
+
+  let cause: string;
+  if (status === 401 || status === 403) {
+    cause = `Hugging Face rejected your token (HTTP ${status}). Check or clear it above.`;
+  } else if (status === 429) {
+    cause = 'Hugging Face rate limit reached (HTTP 429). Try again later.';
+  } else if (status === 503) {
+    cause = 'The hosted model is loading or temporarily unavailable (HTTP 503).';
+  } else if (status !== undefined) {
+    cause = `Hugging Face returned HTTP ${status}.`;
+  } else {
+    cause = 'Could not reach Hugging Face — check your network connection.';
+  }
+
+  return `${cause} ${FALLBACK_SUFFIX}`;
+}
+
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = '';
   // Chunk the conversion so String.fromCharCode never blows the call stack on large slices.
@@ -55,6 +96,9 @@ export async function transcribeViaHf(
 
     const response = await doFetch(HF_ENDPOINT, {
       method: 'POST',
+      // A hung request must not wedge the job — Reset is disabled while converting.
+      // Generous budget: hosted whisper-large-v3 on a 60s slice can be slow when cold.
+      signal: AbortSignal.timeout(120_000),
       headers: {
         Authorization: `Bearer ${options.token}`,
         'Content-Type': 'application/json',
@@ -64,7 +108,10 @@ export async function transcribeViaHf(
 
     if (!response.ok) {
       const detail = await response.text().catch(() => '');
-      throw new Error(`HF hosted transcription failed (${response.status}). ${detail}`.trim());
+      throw new HfTranscribeError(
+        `HF hosted transcription failed (${response.status}). ${detail}`.trim(),
+        response.status
+      );
     }
 
     const data = (await response.json()) as HfResponse;

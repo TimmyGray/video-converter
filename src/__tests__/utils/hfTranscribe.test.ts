@@ -1,4 +1,4 @@
-import { transcribeViaHf } from '@/utils/hfTranscribe';
+import { describeHfFailure, HfTranscribeError, transcribeViaHf } from '@/utils/hfTranscribe';
 
 const SEGMENT_SAMPLES = 60 * 16_000;
 
@@ -73,5 +73,57 @@ describe('transcribeViaHf', () => {
     await expect(
       transcribeViaHf(new Float32Array([0.1]), { token: 'bad', fetchImpl })
     ).rejects.toThrow(/401/);
+  });
+
+  // AC1: the HTTP status must survive the throw so the UI can explain *why* it fell back.
+  it('attaches the HTTP status to the thrown error', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      text: () => Promise.resolve('invalid credentials'),
+    } as unknown as Response);
+
+    await expect(
+      transcribeViaHf(new Float32Array([0.1]), { token: 'bad', fetchImpl })
+    ).rejects.toMatchObject({ name: 'HfTranscribeError', status: 401 });
+  });
+});
+
+// AC2: pure mapping of a hosted failure to a user-facing sentence. No React, no side effects.
+describe('describeHfFailure', () => {
+  it.each([
+    [401, /token/i],
+    [403, /token/i],
+  ])('explains a %s as a token problem', (status, expected) => {
+    expect(describeHfFailure(new HfTranscribeError('boom', status))).toMatch(expected);
+  });
+
+  it('explains a 429 as a rate limit', () => {
+    expect(describeHfFailure(new HfTranscribeError('boom', 429))).toMatch(/rate limit/i);
+  });
+
+  it('explains a 503 as the model warming up', () => {
+    expect(describeHfFailure(new HfTranscribeError('boom', 503))).toMatch(/unavailable|loading/i);
+  });
+
+  it('explains a status-less failure as a connection problem', () => {
+    expect(describeHfFailure(new TypeError('Failed to fetch'))).toMatch(/reach|network|connect/i);
+  });
+
+  it('falls back to a generic message with the status for other codes', () => {
+    expect(describeHfFailure(new HfTranscribeError('boom', 500))).toContain('500');
+  });
+
+  it('always states that transcription continued on-device', () => {
+    for (const error of [
+      new HfTranscribeError('boom', 401),
+      new HfTranscribeError('boom', 429),
+      new HfTranscribeError('boom', 503),
+      new HfTranscribeError('boom', 500),
+      new TypeError('Failed to fetch'),
+      'not even an error',
+    ]) {
+      expect(describeHfFailure(error)).toMatch(/on-device/i);
+    }
   });
 });
