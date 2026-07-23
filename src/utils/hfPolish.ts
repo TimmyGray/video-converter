@@ -15,19 +15,36 @@ const HF_CHAT_ENDPOINT = 'https://router.huggingface.co/v1/chat/completions';
  * are instruction-tuned, multilingual, and non-reasoning (a "thinking" variant would emit
  * chain-of-thought and violate the reply-with-only-the-text constraint).
  */
+/**
+ * Zero-cost model, so polish keeps working after the monthly credit allowance is gone.
+ * A 2-bit ternary quant of Qwen3.6-27B — last in the ladder because that quantization is
+ * lossy for nuanced correction, but free is better than no polish at all.
+ */
+export const FREE_TIER_POLISH_MODEL = 'prism-ml/Ternary-Bonsai-27B-gguf';
+
+/**
+ * Ordering is cheapest-capable first. HF's free tier is $0.10/month of credits (PRO: $2.00),
+ * and polishing an hour of transcript costs ~$0.0005 on the head of this ladder — roughly
+ * 200 hours/month on a free account — so cost only decides longevity, not viability. Each
+ * entry also sits on a *different* provider (nscale / novita / deepinfra / together) so one
+ * provider outage cannot take the feature down.
+ */
 export const POLISH_MODELS = [
-  'Qwen/Qwen3-4B-Instruct-2507', // ~$0.01/$0.03 per M tokens
-  'meta-llama/Llama-3.1-8B-Instruct', // ~$0.02/$0.05
-  'google/gemma-3-4b-it', // ~$0.05/$0.10
+  'Qwen/Qwen3-4B-Instruct-2507', // ~$0.01/$0.03 per M — nscale
+  'meta-llama/Llama-3.1-8B-Instruct', // ~$0.02/$0.05 — novita
+  'google/gemma-3-4b-it', // ~$0.05/$0.10 — deepinfra
+  FREE_TIER_POLISH_MODEL, // $0 — together
 ] as const;
 
 /**
  * Statuses that mean "this model/provider won't serve you" — worth trying the next candidate.
- * 401/403 (bad token) and 429 (quota) fail identically on every model, so they abort the ladder.
+ * 402 is included: credits are per-account, but the ladder ends in a zero-cost model, so an
+ * exhausted allowance should fall through to it. 401/403 (bad token) and 429 (rate limit)
+ * fail identically on every candidate, so they abort the ladder immediately.
  */
 function isModelUnavailable(status: number | undefined): boolean {
   if (status === undefined) return true; // opaque failure: CORS-stripped 503, DNS, offline
-  return status === 400 || status === 404 || status === 422 || status >= 500;
+  return status === 400 || status === 402 || status === 404 || status === 422 || status >= 500;
 }
 
 /** Max characters per request. Keeps each block inside a small model's reliable context. */
@@ -86,6 +103,8 @@ export function describePolishFailure(error: unknown): string {
   let cause: string;
   if (status === 401 || status === 403) {
     cause = `Hugging Face rejected your token for AI cleanup (HTTP ${status}).`;
+  } else if (status === 402) {
+    cause = 'Your Hugging Face inference credits are used up (HTTP 402).';
   } else if (status === 429) {
     cause = 'Hugging Face rate limit reached during AI cleanup (HTTP 429).';
   } else if (status === 503) {

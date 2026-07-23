@@ -1,5 +1,6 @@
 import {
   describePolishFailure,
+  FREE_TIER_POLISH_MODEL,
   HfPolishError,
   POLISH_MODELS,
   polishTranscript,
@@ -164,6 +165,13 @@ describe('model fallback ladder', () => {
     expect(new Set(POLISH_MODELS).size).toBe(POLISH_MODELS.length);
     // Reasoning variants emit chain-of-thought and would violate "reply with ONLY the text".
     for (const model of POLISH_MODELS) expect(model).not.toMatch(/thinking/i);
+    // Coder-tuned variants are the wrong domain for prose transcripts.
+    for (const model of POLISH_MODELS) expect(model).not.toMatch(/coder/i);
+  });
+
+  it('ends on a zero-cost model so polish survives an exhausted credit allowance', () => {
+    expect(POLISH_MODELS[POLISH_MODELS.length - 1]).toBe(FREE_TIER_POLISH_MODEL);
+    expect(POLISH_MODELS.slice(0, -1)).not.toContain(FREE_TIER_POLISH_MODEL);
   });
 
   it('advances to the next model on a 503', async () => {
@@ -216,8 +224,19 @@ describe('model fallback ladder', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(POLISH_MODELS.length);
   });
 
-  // A bad token or an exhausted quota fails identically on every model — burning the
-  // whole ladder just delays the notice.
+  // Credits are per-account, not per-model, but the ladder ends in a zero-cost model —
+  // so an exhausted allowance must fall through to it rather than abort.
+  it('advances on 402 so an exhausted credit allowance reaches the free model', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(errorResponse(402));
+
+    await expect(
+      polishTranscript('some text', { token: 'hf_x', fetchImpl })
+    ).rejects.toMatchObject({ status: 402 });
+    expect(fetchImpl).toHaveBeenCalledTimes(POLISH_MODELS.length);
+  });
+
+  // A bad token fails identically on every model — burning the whole ladder just delays
+  // the notice.
   it.each([401, 403, 429])('does not retry other models on %s', async (status) => {
     const fetchImpl = jest.fn().mockResolvedValue(errorResponse(status));
 
