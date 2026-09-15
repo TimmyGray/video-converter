@@ -58,11 +58,36 @@ export const FORMAT_INFO: Record<VideoFormat, FormatInfo> = {
     color: '#64DD17',
     description: 'Audio extraction format',
   },
+  txt: {
+    label: 'TXT',
+    extension: 'txt',
+    mimeType: 'text/plain',
+    color: '#4FC3F7',
+    description: 'Plain text transcript',
+  },
+  srt: {
+    label: 'SRT',
+    extension: 'srt',
+    mimeType: 'application/x-subrip',
+    color: '#4DD0E1',
+    description: 'SubRip subtitle file',
+  },
+  vtt: {
+    label: 'VTT',
+    extension: 'vtt',
+    mimeType: 'text/vtt',
+    color: '#4DB6AC',
+    description: 'WebVTT subtitle file',
+  },
 };
 
 export function getSupportedFormats(mode: ConversionMode = 'video'): VideoFormat[] {
   if (mode === 'audio-extraction') {
     return ['mp3'];
+  }
+
+  if (mode === 'transcription') {
+    return ['txt', 'srt', 'vtt'];
   }
 
   return ['mp4', 'avi', 'mov', 'mkv', 'webm', 'gif'];
@@ -77,6 +102,23 @@ export function isValidVideoFile(file: File): boolean {
     file.type.startsWith('video/') ||
     file.name.match(/\.(mp4|avi|mov|mkv|webm|gif|flv|wmv|m4v|3gp)$/i) !== null
   );
+}
+
+export function isValidAudioFile(file: File): boolean {
+  return (
+    file.type.startsWith('audio/') ||
+    file.name.match(/\.(mp3|wav|m4a|aac|ogg|oga|opus|flac|weba|wma)$/i) !== null
+  );
+}
+
+/**
+ * Mode-aware source gate shared by the drop zone, the start-conversion guard, and the
+ * convert-button enablement so they never disagree. Transcription accepts audio in addition
+ * to video; every other mode stays video-only.
+ */
+export function isValidSourceFile(file: File, mode: ConversionMode = 'video'): boolean {
+  if (isValidVideoFile(file)) return true;
+  return mode === 'transcription' && isValidAudioFile(file);
 }
 
 export function getOutputFileName(

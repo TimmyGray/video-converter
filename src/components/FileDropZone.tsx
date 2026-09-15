@@ -4,15 +4,23 @@ import React, { useCallback, useRef, useState } from 'react';
 import { Box, Typography } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import VideoFileIcon from '@mui/icons-material/VideoFile';
-import { isValidVideoFile } from '@/utils/formatUtils';
+import { ConversionMode } from '@/types';
+import { isValidSourceFile } from '@/utils/formatUtils';
 
 interface FileDropZoneProps {
   file: File | null;
   onFileSelect: (file: File) => void;
   disabled?: boolean;
+  conversionMode?: ConversionMode;
 }
 
-export default function FileDropZone({ file, onFileSelect, disabled }: FileDropZoneProps) {
+export default function FileDropZone({
+  file,
+  onFileSelect,
+  disabled,
+  conversionMode = 'video',
+}: FileDropZoneProps) {
+  const acceptsAudio = conversionMode === 'transcription';
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -40,13 +48,17 @@ export default function FileDropZone({ file, onFileSelect, disabled }: FileDropZ
   const processFile = useCallback(
     (f: File) => {
       setError(null);
-      if (!isValidVideoFile(f)) {
-        setError('Please select a valid video file');
+      if (!isValidSourceFile(f, conversionMode)) {
+        setError(
+          acceptsAudio
+            ? 'Please select a valid video or audio file'
+            : 'Please select a valid video file'
+        );
         return;
       }
       onFileSelect(f);
     },
-    [onFileSelect]
+    [onFileSelect, conversionMode, acceptsAudio]
   );
 
   const handleDrop = useCallback(
@@ -98,7 +110,11 @@ export default function FileDropZone({ file, onFileSelect, disabled }: FileDropZ
       <input
         ref={inputRef}
         type="file"
-        accept="video/*,.mkv,.avi,.mov"
+        accept={
+          acceptsAudio
+            ? 'video/*,audio/*,.mkv,.avi,.mov,.mp3,.wav,.m4a,.aac,.ogg,.oga,.opus,.flac,.weba,.wma'
+            : 'video/*,.mkv,.avi,.mov'
+        }
         style={{ display: 'none' }}
         onClick={(e) => {
           // Allow selecting the same file repeatedly after reset/retry.
@@ -128,10 +144,18 @@ export default function FileDropZone({ file, onFileSelect, disabled }: FileDropZ
             }}
           />
           <Typography variant="h6" sx={{ color: isDragging ? '#FFD700' : '#FFB74D' }}>
-            {isDragging ? 'Drop your video here!' : 'Drag & drop a video file'}
+            {isDragging
+              ? acceptsAudio
+                ? 'Drop your file here!'
+                : 'Drop your video here!'
+              : acceptsAudio
+                ? 'Drag & drop a video or audio file'
+                : 'Drag & drop a video file'}
           </Typography>
           <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.4)' }}>
-            or click to browse — MP4, AVI, MOV, MKV, WEBM, GIF supported
+            {acceptsAudio
+              ? 'or click to browse — video files plus MP3, WAV, M4A, AAC, OGG, FLAC supported'
+              : 'or click to browse — MP4, AVI, MOV, MKV, WEBM, GIF supported'}
           </Typography>
         </>
       )}

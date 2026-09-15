@@ -11,11 +11,22 @@ import {
   ToggleButton,
   ToggleButtonGroup,
   Chip,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  FormControlLabel,
+  Checkbox,
+  TextField,
+  Link,
+  Alert,
 } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import VideoLibraryIcon from '@mui/icons-material/VideoLibrary';
+import CloudOffIcon from '@mui/icons-material/CloudOff';
+import AutoFixOffIcon from '@mui/icons-material/AutoFixOff';
 import FileDropZone from './FileDropZone';
 import FormatSelector from './FormatSelector';
 import CropSelector from './CropSelector';
@@ -23,8 +34,28 @@ import CropPreviewPanel from './CropPreviewPanel';
 import ConversionProgress from './ConversionProgress';
 import FileInfoCard from './FileInfoCard';
 import SaveDestinationDialog from './SaveDestinationDialog';
+import TranscriptPanel from './TranscriptPanel';
 import { useFileConverter } from '@/hooks/useFileConverter';
-import { getSupportedFormats, isValidVideoFile } from '@/utils/formatUtils';
+import { getSupportedFormats, isValidSourceFile } from '@/utils/formatUtils';
+import { getHfToken, setHfToken } from '@/utils/hfToken';
+
+const TRANSCRIPTION_LANGUAGES: Array<{ value: string; label: string }> = [
+  { value: 'english', label: 'English' },
+  { value: 'spanish', label: 'Spanish' },
+  { value: 'french', label: 'French' },
+  { value: 'german', label: 'German' },
+  { value: 'italian', label: 'Italian' },
+  { value: 'portuguese', label: 'Portuguese' },
+  { value: 'russian', label: 'Russian' },
+  { value: 'ukrainian', label: 'Ukrainian' },
+  { value: 'japanese', label: 'Japanese' },
+  { value: 'korean', label: 'Korean' },
+  { value: 'chinese', label: 'Chinese' },
+  { value: 'arabic', label: 'Arabic' },
+  { value: 'hindi', label: 'Hindi' },
+];
+
+const AUTO_DETECT_LANGUAGE = 'auto';
 
 export default function ConverterCard() {
   const {
@@ -34,6 +65,8 @@ export default function ConverterCard() {
     selectFormat,
     selectCropMode,
     updateCustomCrop,
+    selectTranscriptionLanguage,
+    setTranscriptionTranslate,
     startConversion,
     reset,
   } = useFileConverter();
@@ -41,9 +74,33 @@ export default function ConverterCard() {
   const isActive = job.status === 'loading' || job.status === 'converting';
   const isDone = job.status === 'done';
   const isAudioExtractionMode = job.conversionMode === 'audio-extraction';
+  const isTranscriptionMode = job.conversionMode === 'transcription';
+  const isVideoMode = job.conversionMode === 'video';
   const formatOptions = getSupportedFormats(job.conversionMode);
-  const hasValidSourceVideo = job.file !== null && isValidVideoFile(job.file);
+  const hasValidSource = job.file !== null && isValidSourceFile(job.file, job.conversionMode);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
+
+  // HF token lives in localStorage. ConverterCard is client-only (dynamic ssr:false), so a lazy
+  // initializer reads it safely with no hydration mismatch.
+  const [hfToken, setHfTokenState] = useState(() => getHfToken());
+  const handleHfTokenChange = (value: string) => {
+    setHfTokenState(value);
+    setHfToken(value);
+  };
+
+  const modeLabel = isTranscriptionMode
+    ? 'Transcription Mode'
+    : isAudioExtractionMode
+      ? 'Audio Extraction Mode'
+      : 'Video Conversion Mode';
+  const modeAccentColor = isTranscriptionMode ? '#4FC3F7' : isAudioExtractionMode ? '#64DD17' : '#FFB74D';
+  const convertLabel = isTranscriptionMode
+    ? isActive
+      ? 'Transcribing…'
+      : 'Transcribe'
+    : isActive
+      ? 'Converting…'
+      : 'Convert';
 
   const handleReset = () => {
     setIsSaveDialogOpen(false);
@@ -123,7 +180,12 @@ export default function ConverterCard() {
             </Typography>
           </Box>
 
-          <FileDropZone file={job.file} onFileSelect={selectFile} disabled={isActive} />
+          <FileDropZone
+            file={job.file}
+            onFileSelect={selectFile}
+            disabled={isActive}
+            conversionMode={job.conversionMode}
+          />
 
           <Box sx={{ mt: 3 }}>
             <FileInfoCard
@@ -176,19 +238,18 @@ export default function ConverterCard() {
             >
               <ToggleButton value="video">Video Conversion</ToggleButton>
               <ToggleButton value="audio-extraction">Audio Extraction Mode</ToggleButton>
+              <ToggleButton value="transcription">Transcription</ToggleButton>
             </ToggleButtonGroup>
 
             <Chip
               data-testid="conversion-mode-chip"
-              label={isAudioExtractionMode ? 'Audio Extraction Mode' : 'Video Conversion Mode'}
+              label={modeLabel}
               size="small"
               sx={{
                 fontWeight: 700,
-                color: isAudioExtractionMode ? '#64DD17' : '#FFB74D',
-                border: `1px solid ${isAudioExtractionMode ? 'rgba(100,221,23,0.7)' : 'rgba(255,183,77,0.65)'}`,
-                background: isAudioExtractionMode
-                  ? 'rgba(100,221,23,0.12)'
-                  : 'rgba(255,183,77,0.12)',
+                color: modeAccentColor,
+                border: `1px solid ${modeAccentColor}`,
+                background: `${modeAccentColor}1F`,
               }}
             />
           </Box>
@@ -200,7 +261,86 @@ export default function ConverterCard() {
             disabled={isActive}
           />
 
-          {!isAudioExtractionMode && (
+          {isTranscriptionMode && (
+            <Box
+              data-testid="transcription-options"
+              sx={{ mt: 2.5, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 2 }}
+            >
+              <FormControl size="small" sx={{ minWidth: 180 }} disabled={isActive}>
+                <InputLabel id="transcription-language-label">Spoken language</InputLabel>
+                <Select
+                  labelId="transcription-language-label"
+                  label="Spoken language"
+                  value={job.transcriptionLanguage ?? AUTO_DETECT_LANGUAGE}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    selectTranscriptionLanguage(value === AUTO_DETECT_LANGUAGE ? null : value);
+                  }}
+                  data-testid="transcription-language-select"
+                >
+                  <MenuItem value={AUTO_DETECT_LANGUAGE}>Auto-detect</MenuItem>
+                  {TRANSCRIPTION_LANGUAGES.map((language) => (
+                    <MenuItem key={language.value} value={language.value}>
+                      {language.label}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={job.transcriptionTranslate}
+                    onChange={(event) => setTranscriptionTranslate(event.target.checked)}
+                    disabled={isActive}
+                    data-testid="transcription-translate-checkbox"
+                  />
+                }
+                label="Translate to English"
+              />
+
+              <TextField
+                type="password"
+                size="small"
+                label="Hugging Face token (optional)"
+                placeholder="hf_…"
+                value={hfToken}
+                onChange={(event) => handleHfTokenChange(event.target.value)}
+                disabled={isActive}
+                data-testid="hf-token-input"
+                sx={{ flexBasis: '100%' }}
+                helperText={
+                  <>
+                    With a{' '}
+                    <Link
+                      href="https://huggingface.co/settings/tokens"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      sx={{ color: '#4FC3F7' }}
+                    >
+                      token
+                    </Link>
+                    , transcription runs on Hugging Face&rsquo;s hosted whisper-large-v3 for higher
+                    accuracy, and the finished transcript is sent to Public AI via Hugging Face&rsquo;s
+                    router for cleanup — this uploads your audio to Hugging Face and transcript text
+                    to Public AI. See{' '}
+                    <Link
+                      href="https://publicai.co/tc"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      sx={{ color: '#4FC3F7' }}
+                    >
+                      Public AI&rsquo;s Terms and Privacy
+                    </Link>
+                    . Leave blank to keep everything on-device. Falls back to on-device
+                    automatically if a hosted call fails.
+                  </>
+                }
+              />
+            </Box>
+          )}
+
+          {isVideoMode && (
             <CropSelector
               cropSettings={job.cropSettings}
               onCropModeChange={selectCropMode}
@@ -209,7 +349,38 @@ export default function ConverterCard() {
             />
           )}
 
+          {/* Non-blocking: hosted transcription degraded to on-device. The job continues, so this
+              is a warning banner rather than an error state or a dialog. */}
+          {isTranscriptionMode && job.hostedTranscriptionNotice && (
+            <Alert
+              severity="warning"
+              variant="outlined"
+              icon={<CloudOffIcon fontSize="inherit" />}
+              data-testid="hosted-transcription-notice"
+              sx={{ mt: 3, borderRadius: 2, alignItems: 'center' }}
+            >
+              {job.hostedTranscriptionNotice}
+            </Alert>
+          )}
+
+          {/* Non-blocking: AI polish failed, raw transcript kept. Mirrors the hosted notice. */}
+          {isTranscriptionMode && job.polishNotice && (
+            <Alert
+              severity="warning"
+              variant="outlined"
+              icon={<AutoFixOffIcon fontSize="inherit" />}
+              data-testid="transcript-polish-notice"
+              sx={{ mt: 3, borderRadius: 2, alignItems: 'center' }}
+            >
+              {job.polishNotice}
+            </Alert>
+          )}
+
           <ConversionProgress status={job.status} progress={job.progress} />
+
+          {isTranscriptionMode && (
+            <TranscriptPanel text={job.transcriptText} streaming={job.status === 'converting'} />
+          )}
 
           <Box sx={{ mt: 3, display: 'flex', gap: 2, flexWrap: 'wrap' }}>
             {!isDone && (
@@ -219,10 +390,10 @@ export default function ConverterCard() {
                 size="large"
                 startIcon={<AutoFixHighIcon />}
                 onClick={startConversion}
-                disabled={!hasValidSourceVideo || isActive}
+                disabled={!hasValidSource || isActive}
                 sx={{ flexGrow: 1 }}
               >
-                {isActive ? 'Converting\u2026' : 'Convert'}
+                {convertLabel}
               </Button>
             )}
 
@@ -257,7 +428,7 @@ export default function ConverterCard() {
         </CardContent>
       </Card>
 
-      {!isAudioExtractionMode && (
+      {isVideoMode && (
         <CropPreviewPanel
           cropSettings={job.cropSettings}
           file={job.file}

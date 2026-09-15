@@ -11,7 +11,20 @@ describe('getCommandAttempts', () => {
     );
 
     expect(attempts).toEqual([
-      ['-i', 'input.mp4', '-vn', '-c:a', 'libmp3lame', '-b:a', '320k', 'output.mp3'],
+      [
+        '-i',
+        'input.mp4',
+        '-vn',
+        '-c:a',
+        'libmp3lame',
+        '-b:a',
+        '128k',
+        '-abr',
+        '1',
+        '-sample_fmt',
+        's16p',
+        'output.mp3',
+      ],
     ]);
   });
 
