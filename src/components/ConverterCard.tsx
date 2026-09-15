@@ -321,9 +321,19 @@ export default function ConverterCard() {
                       token
                     </Link>
                     , transcription runs on Hugging Face&rsquo;s hosted whisper-large-v3 for higher
-                    accuracy, and the finished transcript is sent to a hosted AI model for cleanup —
-                    this uploads your audio and transcript text to Hugging Face. Leave blank to keep
-                    everything on-device. Falls back to on-device automatically if a hosted call fails.
+                    accuracy, and the finished transcript is sent to Public AI via Hugging Face&rsquo;s
+                    router for cleanup — this uploads your audio to Hugging Face and transcript text
+                    to Public AI. See{' '}
+                    <Link
+                      href="https://publicai.co/tc"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      sx={{ color: '#4FC3F7' }}
+                    >
+                      Public AI&rsquo;s Terms and Privacy
+                    </Link>
+                    . Leave blank to keep everything on-device. Falls back to on-device
+                    automatically if a hosted call fails.
                   </>
                 }
               />

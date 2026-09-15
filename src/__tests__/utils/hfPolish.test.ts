@@ -1,6 +1,5 @@
 import {
   describePolishFailure,
-  FREE_TIER_POLISH_MODEL,
   HfPolishError,
   POLISH_MODELS,
   polishTranscript,
@@ -163,15 +162,15 @@ describe('model fallback ladder', () => {
   it('advertises more than one candidate, cheapest-capable first', () => {
     expect(POLISH_MODELS.length).toBeGreaterThan(1);
     expect(new Set(POLISH_MODELS).size).toBe(POLISH_MODELS.length);
+    expect(POLISH_MODELS).toEqual([
+      'swiss-ai/Apertus-8B-Instruct-2509:publicai',
+      'speakleash/Bielik-11B-v3.0-Instruct:publicai',
+    ]);
+    expect(POLISH_MODELS.every((model) => model.endsWith(':publicai'))).toBe(true);
     // Reasoning variants emit chain-of-thought and would violate "reply with ONLY the text".
     for (const model of POLISH_MODELS) expect(model).not.toMatch(/thinking/i);
     // Coder-tuned variants are the wrong domain for prose transcripts.
     for (const model of POLISH_MODELS) expect(model).not.toMatch(/coder/i);
-  });
-
-  it('ends on a zero-cost model so polish survives an exhausted credit allowance', () => {
-    expect(POLISH_MODELS[POLISH_MODELS.length - 1]).toBe(FREE_TIER_POLISH_MODEL);
-    expect(POLISH_MODELS.slice(0, -1)).not.toContain(FREE_TIER_POLISH_MODEL);
   });
 
   it('advances to the next model on a 503', async () => {
@@ -224,9 +223,7 @@ describe('model fallback ladder', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(POLISH_MODELS.length);
   });
 
-  // Credits are per-account, not per-model, but the ladder ends in a zero-cost model —
-  // so an exhausted allowance must fall through to it rather than abort.
-  it('advances on 402 so an exhausted credit allowance reaches the free model', async () => {
+  it('advances on 402 to the next explicitly configured provider candidate', async () => {
     const fetchImpl = jest.fn().mockResolvedValue(errorResponse(402));
 
     await expect(
@@ -235,15 +232,27 @@ describe('model fallback ladder', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(POLISH_MODELS.length);
   });
 
-  // A bad token fails identically on every model — burning the whole ladder just delays
-  // the notice.
-  it.each([401, 403, 429])('does not retry other models on %s', async (status) => {
+  // A bad token or rate limit fails identically on every model — burning the whole ladder just
+  // delays the notice. A 403 is different: it can mean the selected model is gated.
+  it.each([401, 429])('does not retry other models on %s', async (status) => {
     const fetchImpl = jest.fn().mockResolvedValue(errorResponse(status));
 
     await expect(
       polishTranscript('some text', { token: 'hf_x', fetchImpl })
     ).rejects.toMatchObject({ status });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('advances on 403 because the selected model may be gated', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce(errorResponse(403))
+      .mockResolvedValueOnce(chatResponse('Polished text here.'));
+
+    await expect(
+      polishTranscript('polished text here', { token: 'hf_x', fetchImpl })
+    ).resolves.toBe('Polished text here.');
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -320,11 +329,12 @@ describe('raw-content preservation through polishTranscript', () => {
 });
 
 describe('describePolishFailure', () => {
-  it.each([
-    [401, /token/i],
-    [403, /token/i],
-  ])('explains a %s as a token problem', (status, expected) => {
-    expect(describePolishFailure(new HfPolishError('boom', status))).toMatch(expected);
+  it('explains a 401 as a token problem', () => {
+    expect(describePolishFailure(new HfPolishError('boom', 401))).toMatch(/token/i);
+  });
+
+  it('explains a 403 as a token or model-access problem', () => {
+    expect(describePolishFailure(new HfPolishError('boom', 403))).toMatch(/token|selected model/i);
   });
 
   it('explains a 429 as a rate limit', () => {

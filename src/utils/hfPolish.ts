@@ -10,41 +10,33 @@ const HF_CHAT_ENDPOINT = 'https://router.huggingface.co/v1/chat/completions';
  * reports an opaque `TypeError: Failed to fetch` with no status. The ladder is what makes the
  * feature survive that.
  *
- * Ordering is cheapest-capable first — HF's "free" tier is a small monthly credit allowance, so
- * price per token decides how long polish keeps working, not whether it works at all. All three
- * are instruction-tuned, multilingual, and non-reasoning (a "thinking" variant would emit
- * chain-of-thought and violate the reply-with-only-the-text constraint).
- */
-/**
- * Zero-cost model, so polish keeps working after the monthly credit allowance is gone.
- * A 2-bit ternary quant of Qwen3.6-27B — last in the ladder because that quantization is
- * lossy for nuanced correction, but free is better than no polish at all.
- */
-export const FREE_TIER_POLISH_MODEL = 'prism-ml/Ternary-Bonsai-27B-gguf';
-
-/**
- * Ordering is cheapest-capable first. HF's free tier is $0.10/month of credits (PRO: $2.00),
- * and polishing an hour of transcript costs ~$0.0005 on the head of this ladder — roughly
- * 200 hours/month on a free account — so cost only decides longevity, not viability. Each
- * entry also sits on a *different* provider (nscale / novita / deepinfra / together) so one
- * provider outage cannot take the feature down.
+ * The ladder deliberately selects Public AI explicitly. Its public-access models avoid the
+ * paid-provider fallback that previously exhausted the small HF monthly allowance. Both are
+ * instruction-tuned and multilingual; neither is a "thinking" variant, so neither should emit
+ * chain-of-thought when asked to return only corrected transcript text.
  */
 export const POLISH_MODELS = [
-  'Qwen/Qwen3-4B-Instruct-2507', // ~$0.01/$0.03 per M — nscale
-  'meta-llama/Llama-3.1-8B-Instruct', // ~$0.02/$0.05 — novita
-  'google/gemma-3-4b-it', // ~$0.05/$0.10 — deepinfra
-  FREE_TIER_POLISH_MODEL, // $0 — together
+  'swiss-ai/Apertus-8B-Instruct-2509:publicai',
+  'speakleash/Bielik-11B-v3.0-Instruct:publicai',
 ] as const;
 
 /**
  * Statuses that mean "this model/provider won't serve you" — worth trying the next candidate.
- * 402 is included: credits are per-account, but the ladder ends in a zero-cost model, so an
- * exhausted allowance should fall through to it. 401/403 (bad token) and 429 (rate limit)
- * fail identically on every candidate, so they abort the ladder immediately.
+ * 402 is included so a provider/account-specific payment rejection can advance to the next
+ * configured candidate. 403 is also candidate-specific in practice: a model may be gated even
+ * when the token is valid, so advance past it. 401 (bad token) and 429 (rate limit) fail
+ * identically on every candidate, so they abort the ladder immediately.
  */
 function isModelUnavailable(status: number | undefined): boolean {
   if (status === undefined) return true; // opaque failure: CORS-stripped 503, DNS, offline
-  return status === 400 || status === 402 || status === 404 || status === 422 || status >= 500;
+  return (
+    status === 400 ||
+    status === 402 ||
+    status === 403 ||
+    status === 404 ||
+    status === 422 ||
+    status >= 500
+  );
 }
 
 /** Max characters per request. Keeps each block inside a small model's reliable context. */
@@ -101,8 +93,10 @@ export function describePolishFailure(error: unknown): string {
   const status = error instanceof HfPolishError ? error.status : undefined;
 
   let cause: string;
-  if (status === 401 || status === 403) {
+  if (status === 401) {
     cause = `Hugging Face rejected your token for AI cleanup (HTTP ${status}).`;
+  } else if (status === 403) {
+    cause = `Hugging Face or the selected model rejected access for AI cleanup (HTTP ${status}).`;
   } else if (status === 402) {
     cause = 'Your Hugging Face inference credits are used up (HTTP 402).';
   } else if (status === 429) {
