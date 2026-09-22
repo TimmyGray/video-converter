@@ -36,6 +36,7 @@ export type ConversionStatus =
   | 'idle'
   | 'loading'
   | 'converting'
+  | 'paused'
   | 'done'
   | 'error';
 

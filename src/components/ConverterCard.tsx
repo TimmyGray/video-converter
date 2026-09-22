@@ -20,6 +20,11 @@ import {
   TextField,
   Link,
   Alert,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
 } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
@@ -27,6 +32,7 @@ import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import VideoLibraryIcon from '@mui/icons-material/VideoLibrary';
 import CloudOffIcon from '@mui/icons-material/CloudOff';
 import AutoFixOffIcon from '@mui/icons-material/AutoFixOff';
+import StopCircleIcon from '@mui/icons-material/StopCircle';
 import FileDropZone from './FileDropZone';
 import FormatSelector from './FormatSelector';
 import CropSelector from './CropSelector';
@@ -37,7 +43,8 @@ import SaveDestinationDialog from './SaveDestinationDialog';
 import TranscriptPanel from './TranscriptPanel';
 import { useFileConverter } from '@/hooks/useFileConverter';
 import { getSupportedFormats, isValidSourceFile } from '@/utils/formatUtils';
-import { getHfToken, setHfToken } from '@/utils/hfToken';
+import { getHfToken, getOpenRouterToken, setHfToken, setOpenRouterToken } from '@/utils/hfToken';
+import { verifyHfToken, verifyOpenRouterToken } from '@/utils/providerTokenValidation';
 
 const TRANSCRIPTION_LANGUAGES: Array<{ value: string; label: string }> = [
   { value: 'english', label: 'English' },
@@ -68,6 +75,8 @@ export default function ConverterCard() {
     selectTranscriptionLanguage,
     setTranscriptionTranslate,
     startConversion,
+    stopConversion,
+    finishStoppedTranscription,
     reset,
   } = useFileConverter();
 
@@ -80,12 +89,57 @@ export default function ConverterCard() {
   const hasValidSource = job.file !== null && isValidSourceFile(job.file, job.conversionMode);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
 
-  // HF token lives in localStorage. ConverterCard is client-only (dynamic ssr:false), so a lazy
-  // initializer reads it safely with no hydration mismatch.
+  // Provider tokens live in localStorage. ConverterCard is client-only (dynamic ssr:false), so
+  // lazy initializers read them safely with no hydration mismatch.
   const [hfToken, setHfTokenState] = useState(() => getHfToken());
+  const [openRouterToken, setOpenRouterTokenState] = useState(() => getOpenRouterToken());
+  const [hfTokenStatus, setHfTokenStatus] = useState<string | null>(null);
+  const [openRouterTokenStatus, setOpenRouterTokenStatus] = useState<string | null>(null);
+  const [isAddingHfToken, setIsAddingHfToken] = useState(false);
+  const [isAddingOpenRouterToken, setIsAddingOpenRouterToken] = useState(false);
   const handleHfTokenChange = (value: string) => {
     setHfTokenState(value);
-    setHfToken(value);
+    setHfTokenStatus(null);
+  };
+  const handleOpenRouterTokenChange = (value: string) => {
+    setOpenRouterTokenState(value);
+    setOpenRouterTokenStatus(null);
+  };
+  const handleAddHfToken = async () => {
+    if (!hfToken.trim()) {
+      setHfToken('');
+      setHfTokenStatus('Removed.');
+      return;
+    }
+    setIsAddingHfToken(true);
+    setHfTokenStatus('Checking token…');
+    try {
+      await verifyHfToken(hfToken);
+      setHfToken(hfToken);
+      setHfTokenStatus('Token verified and added.');
+    } catch (error) {
+      setHfTokenStatus(error instanceof Error ? error.message : 'Could not verify this token.');
+    } finally {
+      setIsAddingHfToken(false);
+    }
+  };
+  const handleAddOpenRouterToken = async () => {
+    if (!openRouterToken.trim()) {
+      setOpenRouterToken('');
+      setOpenRouterTokenStatus('Removed.');
+      return;
+    }
+    setIsAddingOpenRouterToken(true);
+    setOpenRouterTokenStatus('Checking token…');
+    try {
+      await verifyOpenRouterToken(openRouterToken);
+      setOpenRouterToken(openRouterToken);
+      setOpenRouterTokenStatus('Token verified and added.');
+    } catch (error) {
+      setOpenRouterTokenStatus(error instanceof Error ? error.message : 'Could not verify this token.');
+    } finally {
+      setIsAddingOpenRouterToken(false);
+    }
   };
 
   const modeLabel = isTranscriptionMode
@@ -299,17 +353,18 @@ export default function ConverterCard() {
                 label="Translate to English"
               />
 
-              <TextField
-                type="password"
-                size="small"
-                label="Hugging Face token (optional)"
-                placeholder="hf_…"
-                value={hfToken}
-                onChange={(event) => handleHfTokenChange(event.target.value)}
-                disabled={isActive}
-                data-testid="hf-token-input"
-                sx={{ flexBasis: '100%' }}
-                helperText={
+              <Box sx={{ display: 'flex', flexBasis: '100%', flexWrap: 'wrap', gap: 1, alignItems: 'start' }}>
+                <TextField
+                  type="password"
+                  size="small"
+                  label="Hugging Face token (optional)"
+                  placeholder="hf_…"
+                  value={hfToken}
+                  onChange={(event) => handleHfTokenChange(event.target.value)}
+                  disabled={isActive || isAddingHfToken}
+                  data-testid="hf-token-input"
+                  sx={{ flex: '1 1 260px' }}
+                  helperText={
                   <>
                     With a{' '}
                     <Link
@@ -321,9 +376,9 @@ export default function ConverterCard() {
                       token
                     </Link>
                     , transcription runs on Hugging Face&rsquo;s hosted whisper-large-v3 for higher
-                    accuracy, and the finished transcript is sent to Public AI via Hugging Face&rsquo;s
-                    router for cleanup — this uploads your audio to Hugging Face and transcript text
-                    to Public AI. See{' '}
+                    accuracy. It also uses Hugging Face&rsquo;s router for transcript cleanup unless
+                    that request fails and an OpenRouter token is set — this uploads your audio to
+                    Hugging Face and transcript text to Public AI. See{' '}
                     <Link
                       href="https://publicai.co/tc"
                       target="_blank"
@@ -332,11 +387,67 @@ export default function ConverterCard() {
                     >
                       Public AI&rsquo;s Terms and Privacy
                     </Link>
-                    . Leave blank to keep everything on-device. Falls back to on-device
-                    automatically if a hosted call fails.
+                    . Leave blank to keep transcription on-device. Falls back to on-device
+                    automatically if hosted transcription fails.
                   </>
-                }
-              />
+                  }
+                />
+                <Button
+                  variant="outlined"
+                  onClick={handleAddHfToken}
+                  disabled={isActive || isAddingHfToken}
+                  data-testid="add-hf-token-button"
+                >
+                  {isAddingHfToken ? 'Checking…' : hfToken.trim() ? 'Add' : 'Remove'}
+                </Button>
+                {hfTokenStatus && (
+                  <Typography variant="caption" data-testid="hf-token-status" sx={{ flexBasis: '100%' }}>
+                    {hfTokenStatus}
+                  </Typography>
+                )}
+              </Box>
+              <Box sx={{ display: 'flex', flexBasis: '100%', flexWrap: 'wrap', gap: 1, alignItems: 'start' }}>
+                <TextField
+                  type="password"
+                  size="small"
+                  label="OpenRouter token (optional, cleanup only)"
+                  placeholder="sk-or-…"
+                  value={openRouterToken}
+                  onChange={(event) => handleOpenRouterTokenChange(event.target.value)}
+                  disabled={isActive || isAddingOpenRouterToken}
+                  data-testid="openrouter-token-input"
+                  sx={{ flex: '1 1 260px' }}
+                  helperText={
+                  <>
+                    With an{' '}
+                    <Link
+                      href="https://openrouter.ai/settings/keys"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      sx={{ color: '#4FC3F7' }}
+                    >
+                      OpenRouter token
+                    </Link>
+                    , the transcript is sent to OpenRouter&rsquo;s Qwen 3.8 27B Free model for cleanup.
+                    If both tokens are set, Hugging Face remains the primary cleanup provider and
+                    OpenRouter is used only if it fails. This token never changes transcription.
+                  </>
+                  }
+                />
+                <Button
+                  variant="outlined"
+                  onClick={handleAddOpenRouterToken}
+                  disabled={isActive || isAddingOpenRouterToken}
+                  data-testid="add-openrouter-token-button"
+                >
+                  {isAddingOpenRouterToken ? 'Checking…' : openRouterToken.trim() ? 'Add' : 'Remove'}
+                </Button>
+                {openRouterTokenStatus && (
+                  <Typography variant="caption" data-testid="openrouter-token-status" sx={{ flexBasis: '100%' }}>
+                    {openRouterTokenStatus}
+                  </Typography>
+                )}
+              </Box>
             </Box>
           )}
 
@@ -397,6 +508,19 @@ export default function ConverterCard() {
               </Button>
             )}
 
+            {isTranscriptionMode && isActive && (
+              <Button
+                variant="outlined"
+                color="warning"
+                size="large"
+                startIcon={<StopCircleIcon />}
+                onClick={stopConversion}
+                data-testid="stop-transcription-button"
+              >
+                Stop and save progress
+              </Button>
+            )}
+
             {isDone && job.outputUrl && (
               <Button
                 variant="contained"
@@ -449,6 +573,25 @@ export default function ConverterCard() {
         ffmpegMode={job.ffmpegMode}
         performanceNote={job.performanceNote}
       />
+
+      <Dialog
+        open={isTranscriptionMode && job.status === 'paused'}
+        aria-labelledby="stopped-transcription-title"
+        data-testid="stopped-transcription-dialog"
+      >
+        <DialogTitle id="stopped-transcription-title">Transcription stopped</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Keep the saved partial transcript as it is, or run AI cleanup before saving it?
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => void finishStoppedTranscription(false)}>Keep as is</Button>
+          <Button variant="contained" onClick={() => void finishStoppedTranscription(true)}>
+            Polish and save
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

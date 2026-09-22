@@ -6,7 +6,7 @@ A browser-based video converter built with Next.js, Material UI, and FFmpeg WebA
 
 - 🎬 Convert between MP4, AVI, MOV, MKV, WEBM, and GIF formats
 - 🔒 100% client-side processing via FFmpeg WASM (local transcription runs in-browser via Whisper WASM)
-- ☁️ Optional: paste a Hugging Face token to transcribe on HF's hosted `whisper-large-v3` for higher accuracy. When AI polish is enabled, the finished transcript text is also sent to Public AI via Hugging Face's router for cleanup; see [Public AI's Terms and Privacy](https://publicai.co/tc). These are the only paths that leave the device, and only when a token is set. Without a token, processing stays fully on-device, and any hosted transcription failure falls back to local automatically.
+- ☁️ Optional: a Hugging Face token transcribes with hosted `whisper-large-v3` for higher accuracy and is the primary AI cleanup provider. An OpenRouter token enables cleanup only, using `qwen/qwen3.8-27b:free`; it is the sole cleanup provider when no Hugging Face token is set and the fallback when both are set. Audio is sent only to Hugging Face for hosted transcription; transcript text is sent to the selected cleanup provider. Without either token, processing stays fully on-device, and hosted transcription failures fall back locally.
 - 📱 Progressive Web App (PWA) with offline support
 - 🎨 Dark theme with amber/orange glow aesthetics (Material UI)
 - 📦 Drag-and-drop file upload

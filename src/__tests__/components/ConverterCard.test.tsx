@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import ConverterCard from '@/components/ConverterCard';
 import { ConversionJob } from '@/types';
 
@@ -14,6 +14,15 @@ const mockSelectTranscriptionLanguage = jest.fn();
 const mockSetTranscriptionTranslate = jest.fn();
 const mockStartConversion = jest.fn();
 const mockReset = jest.fn();
+const mockStopConversion = jest.fn();
+const mockFinishStoppedTranscription = jest.fn();
+const mockVerifyHfToken = jest.fn();
+const mockVerifyOpenRouterToken = jest.fn();
+
+jest.mock('@/utils/providerTokenValidation', () => ({
+  verifyHfToken: (...args: unknown[]) => mockVerifyHfToken(...args),
+  verifyOpenRouterToken: (...args: unknown[]) => mockVerifyOpenRouterToken(...args),
+}));
 
 jest.mock('@/hooks/useFileConverter', () => ({
   useFileConverter: () => mockUseFileConverter(),
@@ -108,6 +117,8 @@ function mockConverterState(job: ConversionJob) {
     selectTranscriptionLanguage: mockSelectTranscriptionLanguage,
     setTranscriptionTranslate: mockSetTranscriptionTranslate,
     startConversion: mockStartConversion,
+    stopConversion: mockStopConversion,
+    finishStoppedTranscription: mockFinishStoppedTranscription,
     reset: mockReset,
   });
 }
@@ -115,6 +126,9 @@ function mockConverterState(job: ConversionJob) {
 describe('ConverterCard', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    window.localStorage.clear();
+    mockVerifyHfToken.mockResolvedValue(undefined);
+    mockVerifyOpenRouterToken.mockResolvedValue(undefined);
   });
 
   it('renders mode controls and dispatches audio mode changes', () => {
@@ -271,6 +285,41 @@ describe('ConverterCard', () => {
       expect(screen.getByTestId('transcript-panel')).toBeInTheDocument();
       expect(screen.getByTestId('transcript-text')).toHaveTextContent('Hello there, world.');
       expect(screen.getByTestId('copy-transcript-button')).toBeInTheDocument();
+    });
+
+    it('renders separate Hugging Face and OpenRouter token inputs in transcription mode', () => {
+      mockConverterState(createJob({ conversionMode: 'transcription', outputFormat: 'txt' }));
+
+      render(<ConverterCard />);
+
+      expect(screen.getByTestId('hf-token-input')).toBeInTheDocument();
+      expect(screen.getByTestId('openrouter-token-input')).toBeInTheDocument();
+    });
+
+    it('activates a Hugging Face token only after the Add check succeeds', async () => {
+      mockConverterState(createJob({ conversionMode: 'transcription', outputFormat: 'txt' }));
+
+      render(<ConverterCard />);
+      fireEvent.change(screen.getByTestId('hf-token-input').querySelector('input')!, {
+        target: { value: 'hf_new' },
+      });
+      expect(window.localStorage.getItem('vf_hf_token')).toBeNull();
+
+      fireEvent.click(screen.getByTestId('add-hf-token-button'));
+
+      await waitFor(() => expect(mockVerifyHfToken).toHaveBeenCalledWith('hf_new'));
+      expect(window.localStorage.getItem('vf_hf_token')).toBe('hf_new');
+      expect(screen.getByTestId('hf-token-status')).toHaveTextContent(/verified and added/i);
+    });
+
+    it('shows a keep-or-polish choice after transcription is stopped', () => {
+      mockConverterState(createJob({ conversionMode: 'transcription', outputFormat: 'txt', status: 'paused' }));
+
+      render(<ConverterCard />);
+
+      expect(screen.getByTestId('stopped-transcription-dialog')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: /keep as is/i }));
+      expect(mockFinishStoppedTranscription).toHaveBeenCalledWith(false);
     });
 
     // AC4: the notice informs without interrupting — it renders alongside a still-running job
