@@ -22,6 +22,7 @@ const STATUS_COLOR: Record<ConversionStatus, string> = {
   idle: 'rgba(255,255,255,0.4)',
   loading: '#FFB74D',
   converting: '#FFD700',
+  paused: '#FFB74D',
   done: '#69F0AE',
   error: '#FF5252',
 };
@@ -30,6 +31,7 @@ const STATUS_LABEL: Record<ConversionStatus, string> = {
   idle: 'Ready',
   loading: 'Loading\u2026',
   converting: 'Converting\u2026',
+  paused: 'Paused',
   done: 'Complete',
   error: 'Error',
 };

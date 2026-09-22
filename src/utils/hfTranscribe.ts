@@ -1,5 +1,6 @@
 import type { TranscriptChunk } from '@/types';
 import { pcm16kToWavBytes } from '@/utils/audioUtils';
+import { fetchWithExponentialBackoff, requestSignal } from '@/utils/requestRetry';
 
 const SAMPLE_RATE = 16_000;
 const SEGMENT_SECONDS = 60;
@@ -10,6 +11,8 @@ export interface HfTranscribeOptions {
   token: string;
   onPartialText?: (text: string) => void;
   onProgress?: (percent: number) => void;
+  /** Cancels the current hosted request and any scheduled rate-limit retry. */
+  signal?: AbortSignal;
   /** Injectable for tests; defaults to global fetch. */
   fetchImpl?: typeof fetch;
 }
@@ -94,17 +97,17 @@ export async function transcribeViaHf(
 
     const base64 = bytesToBase64(pcm16kToWavBytes(slice));
 
-    const response = await doFetch(HF_ENDPOINT, {
+    const response = await fetchWithExponentialBackoff(HF_ENDPOINT, {
       method: 'POST',
       // A hung request must not wedge the job — Reset is disabled while converting.
       // Generous budget: hosted whisper-large-v3 on a 60s slice can be slow when cold.
-      signal: AbortSignal.timeout(120_000),
+      signal: requestSignal(120_000, options.signal),
       headers: {
         Authorization: `Bearer ${options.token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ inputs: base64, parameters: { return_timestamps: true } }),
-    });
+    }, { fetchImpl: doFetch });
 
     if (!response.ok) {
       const detail = await response.text().catch(() => '');

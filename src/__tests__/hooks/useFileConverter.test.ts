@@ -15,6 +15,7 @@ const mockTranscribe = jest.fn().mockResolvedValue({
   text: 'hello world',
   chunks: [{ text: 'hello world', timestamp: [0, 1] }],
 });
+const mockTerminate = jest.fn();
 
 jest.mock('@/hooks/useFFmpeg', () => ({
   useFFmpeg: () => ({
@@ -31,7 +32,7 @@ jest.mock('@/hooks/useFFmpeg', () => ({
 jest.mock('@/hooks/useTranscriber', () => ({
   useTranscriber: () => ({
     transcribe: mockTranscribe,
-    terminate: jest.fn(),
+    terminate: mockTerminate,
   }),
 }));
 
@@ -40,8 +41,10 @@ jest.mock('@/utils/audioUtils', () => ({
 }));
 
 const mockGetHfToken = jest.fn(() => '');
+const mockGetOpenRouterToken = jest.fn(() => '');
 jest.mock('@/utils/hfToken', () => ({
   getHfToken: () => mockGetHfToken(),
+  getOpenRouterToken: () => mockGetOpenRouterToken(),
 }));
 
 const mockTranscribeViaHf = jest.fn();
@@ -60,6 +63,11 @@ jest.mock('@/utils/hfPolish', () => ({
     `polish-described: ${error instanceof Error ? error.message : String(error)}`,
 }));
 
+const mockPolishViaOpenRouter = jest.fn();
+jest.mock('@/utils/openRouterPolish', () => ({
+  polishViaOpenRouter: (...args: unknown[]) => mockPolishViaOpenRouter(...args),
+}));
+
 beforeAll(() => {
   global.URL.createObjectURL = jest.fn(() => 'blob:transcript');
   global.URL.revokeObjectURL = jest.fn();
@@ -69,12 +77,15 @@ describe('useFileConverter', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetHfToken.mockReturnValue('');
+    mockGetOpenRouterToken.mockReturnValue('');
+    mockTerminate.mockReset();
     mockTranscribeViaHf.mockResolvedValue({
       text: 'hosted text',
       chunks: [{ text: 'hosted text', timestamp: [0, 1] }],
     });
     // Passthrough by default so polish-agnostic tests keep their assertions; polish tests override.
     mockPolishTranscript.mockImplementation(async (text: string) => text);
+    mockPolishViaOpenRouter.mockImplementation(async (text: string) => text);
   });
 
   it('initialises with default state', () => {
@@ -423,6 +434,45 @@ describe('useFileConverter', () => {
       expect(result.current.job.polishNotice).toBeNull();
     });
 
+    it('uses OpenRouter for cleanup when it is the only configured provider', async () => {
+      mockGetOpenRouterToken.mockReturnValue('sk-or-v1_x');
+      mockPolishViaOpenRouter.mockResolvedValue('OpenRouter cleaned text.');
+
+      const { result } = renderHook(() => useFileConverter());
+      await startTranscription(result);
+
+      // OpenRouter does not alter hosted-transcription selection: this remains local without HF.
+      expect(mockTranscribe).toHaveBeenCalled();
+      expect(mockTranscribeViaHf).not.toHaveBeenCalled();
+      expect(mockPolishTranscript).not.toHaveBeenCalled();
+      expect(mockPolishViaOpenRouter).toHaveBeenCalledWith(
+        'hello world',
+        expect.objectContaining({ token: 'sk-or-v1_x' })
+      );
+      expect(result.current.job.transcriptText).toBe('OpenRouter cleaned text.');
+    });
+
+    it('retries cleanup through OpenRouter when Hugging Face fails and both tokens are set', async () => {
+      mockGetHfToken.mockReturnValue('hf_x');
+      mockGetOpenRouterToken.mockReturnValue('sk-or-v1_x');
+      mockPolishTranscript.mockRejectedValueOnce(new Error('HF unavailable'));
+      mockPolishViaOpenRouter.mockResolvedValueOnce('Fallback cleaned text.');
+
+      const { result } = renderHook(() => useFileConverter());
+      await startTranscription(result);
+
+      expect(mockPolishTranscript).toHaveBeenCalledWith(
+        'hosted text',
+        expect.objectContaining({ token: 'hf_x' })
+      );
+      expect(mockPolishViaOpenRouter).toHaveBeenCalledWith(
+        'hosted text',
+        expect.objectContaining({ token: 'sk-or-v1_x' })
+      );
+      expect(result.current.job.transcriptText).toBe('Fallback cleaned text.');
+      expect(result.current.job.polishNotice).toBeNull();
+    });
+
     it('skips polish for an empty transcript', async () => {
       mockGetHfToken.mockReturnValue('hf_x');
       mockTranscribeViaHf.mockResolvedValue({ text: '', chunks: [] });
@@ -534,6 +584,43 @@ describe('useFileConverter', () => {
       act(() => result.current.reset());
       expect(result.current.job.polishNotice).toBeNull();
     });
+  });
+
+  it('stops transcription without losing streamed text and can save it unpolished', async () => {
+    let resolveTranscription: (() => void) | undefined;
+    mockTranscribe.mockImplementationOnce(async (_audio, options) => {
+      options.onPartialText?.('saved partial transcript');
+      await new Promise<void>((resolve) => {
+        resolveTranscription = resolve;
+      });
+      return { text: 'late text', chunks: [] };
+    });
+
+    const { result } = renderHook(() => useFileConverter());
+    const file = new File([''], 'lecture.mp4', { type: 'video/mp4' });
+    act(() => result.current.selectFile(file));
+    act(() => result.current.selectConversionMode('transcription'));
+    act(() => {
+      void result.current.startConversion();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    act(() => result.current.stopConversion());
+
+    expect(mockTerminate).toHaveBeenCalled();
+    expect(result.current.job.status).toBe('paused');
+    expect(result.current.job.transcriptText).toBe('saved partial transcript');
+
+    await act(async () => {
+      await result.current.finishStoppedTranscription(false);
+    });
+
+    expect(result.current.job.status).toBe('done');
+    expect(result.current.job.transcriptText).toBe('saved partial transcript');
+    resolveTranscription?.();
   });
 
   it('uses the local worker when no token is set', async () => {

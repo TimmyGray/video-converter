@@ -25,6 +25,7 @@ export interface UseTranscriberReturn {
 export function useTranscriber(): UseTranscriberReturn {
   const workerRef = useRef<Worker | null>(null);
   const requestIdRef = useRef(0);
+  const cancelPendingRef = useRef<(() => void) | null>(null);
 
   const getWorker = useCallback((): Worker => {
     if (!workerRef.current) {
@@ -45,6 +46,12 @@ export function useTranscriber(): UseTranscriberReturn {
         const cleanup = () => {
           worker.removeEventListener('message', handleMessage);
           worker.removeEventListener('error', handleError);
+          cancelPendingRef.current = null;
+        };
+
+        cancelPendingRef.current = () => {
+          cleanup();
+          reject(new DOMException('Transcription was stopped.', 'AbortError'));
         };
 
         const handleMessage = (event: MessageEvent<WorkerOutbound>) => {
@@ -105,6 +112,7 @@ export function useTranscriber(): UseTranscriberReturn {
   );
 
   const terminate = useCallback(() => {
+    cancelPendingRef.current?.();
     workerRef.current?.terminate();
     workerRef.current = null;
   }, []);

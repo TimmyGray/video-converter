@@ -1,3 +1,5 @@
+import { fetchWithExponentialBackoff, requestSignal, type RetryOptions } from '@/utils/requestRetry';
+
 const HF_CHAT_ENDPOINT = 'https://router.huggingface.co/v1/chat/completions';
 
 /**
@@ -55,7 +57,7 @@ const MAX_LENGTH_RATIO = 2.0;
 /**
  * Tuned for a weak model: imperative, forbids every observed failure mode, demands bare output.
  */
-const SYSTEM_PROMPT =
+export const POLISH_SYSTEM_PROMPT =
   'You fix errors in speech-to-text transcripts. Correct punctuation, casing, ' +
   'and clearly mis-transcribed words using surrounding context. Keep the original ' +
   'language. Do NOT add, remove, summarize, translate, or reorder content. ' +
@@ -64,6 +66,12 @@ const SYSTEM_PROMPT =
 export interface PolishOptions {
   token: string;
   onProgress?: (percent: number) => void;
+  /** Emits the partially polished transcript while blocks finish. */
+  onPartialText?: (text: string) => void;
+  /** Cancels the current request and any scheduled rate-limit retry. */
+  signal?: AbortSignal;
+  /** Test-only retry configuration; production uses the standard exponential policy. */
+  retryOptions?: Omit<RetryOptions, 'fetchImpl'>;
   /** Injectable for tests; defaults to global fetch. */
   fetchImpl?: typeof fetch;
 }
@@ -89,27 +97,30 @@ export class HfPolishError extends Error {
 /**
  * Maps a polish failure to a single user-facing sentence. Pure — safe to call anywhere.
  */
-export function describePolishFailure(error: unknown): string {
+export function describePolishFailure(
+  error: unknown,
+  provider: 'huggingface' | 'openrouter' = 'huggingface'
+): string {
   const status = error instanceof HfPolishError ? error.status : undefined;
+  const providerName = provider === 'openrouter' ? 'OpenRouter' : 'Hugging Face';
 
   let cause: string;
   if (status === 401) {
-    cause = `Hugging Face rejected your token for AI cleanup (HTTP ${status}).`;
+    cause = `${providerName} rejected your token for AI cleanup (HTTP ${status}).`;
   } else if (status === 403) {
-    cause = `Hugging Face or the selected model rejected access for AI cleanup (HTTP ${status}).`;
+    cause = `${providerName} or the selected model rejected access for AI cleanup (HTTP ${status}).`;
   } else if (status === 402) {
-    cause = 'Your Hugging Face inference credits are used up (HTTP 402).';
+    cause = `Your ${providerName} inference credits are used up (HTTP 402).`;
   } else if (status === 429) {
-    cause = 'Hugging Face rate limit reached during AI cleanup (HTTP 429).';
+    cause = `${providerName} rate limit reached during AI cleanup (HTTP 429).`;
   } else if (status === 503) {
     cause = 'The AI cleanup model is loading or temporarily unavailable (HTTP 503).';
   } else if (status !== undefined) {
     cause = `AI cleanup request failed (HTTP ${status}).`;
   } else {
-    // No status means no readable response: offline, or (commonly) an HF error response
-    // returned without CORS headers, which the browser hides behind an opaque failure.
+    // No status means no readable response: offline, timeout, DNS, or a CORS-blocked error.
     cause =
-      'Could not reach Hugging Face for AI cleanup — the service may be unavailable, or the request was blocked. Check your network connection.';
+      `Could not reach ${providerName} for AI cleanup — the service may be unavailable, or the request was blocked. Check your network connection.`;
   }
 
   return `${cause} The transcript was left unpolished.`;
@@ -172,13 +183,15 @@ async function requestPolish(
   model: string,
   body: string,
   token: string,
-  doFetch: typeof fetch
+  doFetch: typeof fetch,
+  signal?: AbortSignal,
+  retryOptions?: Omit<RetryOptions, 'fetchImpl'>
 ): Promise<ChatCompletionResponse> {
   let response: Response;
   try {
-    response = await doFetch(HF_CHAT_ENDPOINT, {
+    response = await fetchWithExponentialBackoff(HF_CHAT_ENDPOINT, {
       method: 'POST',
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: requestSignal(REQUEST_TIMEOUT_MS, signal),
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
@@ -190,11 +203,11 @@ async function requestPolish(
         // scripts (CJK ≈ 1 token/char) are not silently truncated by the cap.
         max_tokens: Math.min(4096, body.length + 128),
         messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'system', content: POLISH_SYSTEM_PROMPT },
           { role: 'user', content: body },
         ],
       }),
-    });
+    }, { ...retryOptions, fetchImpl: doFetch });
   } catch (networkError) {
     // No response at all: offline, DNS, timeout, or a CORS-blocked error response
     // (the router's 503 path omits CORS headers, which hides the status from us).
@@ -258,7 +271,14 @@ export async function polishTranscript(text: string, options: PolishOptions): Pr
     let lastError: HfPolishError | null = null;
     for (let m = modelIndex; m < POLISH_MODELS.length; m++) {
       try {
-        data = await requestPolish(POLISH_MODELS[m], body, options.token, doFetch);
+        data = await requestPolish(
+          POLISH_MODELS[m],
+          body,
+          options.token,
+          doFetch,
+          options.signal,
+          options.retryOptions
+        );
         modelIndex = m;
         lastError = null;
         break;
@@ -285,6 +305,7 @@ export async function polishTranscript(text: string, options: PolishOptions): Pr
       ratio <= MAX_LENGTH_RATIO &&
       choice?.finish_reason !== 'length';
     polished.push(sane ? lead + candidate + trail : block);
+    options.onPartialText?.(polished.join('') + blocks.slice(i + 1).join(''));
 
     reportProgress();
   }

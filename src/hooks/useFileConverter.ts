@@ -13,9 +13,10 @@ import { useFFmpeg } from '@/hooks/useFFmpeg';
 import { useTranscriber } from '@/hooks/useTranscriber';
 import { getFormatInfo, getOutputFileName, isValidSourceFile } from '@/utils/formatUtils';
 import { decodeWavToPcm16k } from '@/utils/audioUtils';
-import { getHfToken } from '@/utils/hfToken';
+import { getHfToken, getOpenRouterToken } from '@/utils/hfToken';
 import { describeHfFailure, transcribeViaHf } from '@/utils/hfTranscribe';
 import { describePolishFailure, polishTranscript } from '@/utils/hfPolish';
+import { polishViaOpenRouter } from '@/utils/openRouterPolish';
 import { serializeTranscript } from '@/utils/subtitleUtils';
 
 const TRANSCRIPT_FORMATS: TranscriptFormat[] = ['txt', 'srt', 'vtt'];
@@ -67,6 +68,8 @@ export interface UseFileConverterReturn {
   selectTranscriptionLanguage: (language: string | null) => void;
   setTranscriptionTranslate: (translate: boolean) => void;
   startConversion: () => Promise<void>;
+  stopConversion: () => void;
+  finishStoppedTranscription: (polish: boolean) => Promise<void>;
   reset: () => void;
 }
 
@@ -107,8 +110,29 @@ export function useFileConverter(): UseFileConverterReturn {
   // Incremented on reset (and each run start) so an in-flight conversion whose run was
   // invalidated can detect it and stop writing state for a job that no longer exists.
   const runIdRef = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const transcriptionStageRef = useRef<'idle' | 'transcribing' | 'polishing'>('idle');
+  const latestTranscriptTextRef = useRef('');
+  const latestTranscriptChunksRef = useRef<TranscriptChunk[]>([]);
   const { isLoaded, isLoading, loadError, ffmpegMode, loadFFmpeg, transcode, extractPcmWav } = useFFmpeg();
-  const { transcribe } = useTranscriber();
+  const { transcribe, terminate } = useTranscriber();
+
+  const finalizeTranscript = useCallback((text: string, chunks: TranscriptChunk[]) => {
+    setJob((prev) => {
+      const transcriptFormat: TranscriptFormat = isTranscriptFormat(prev.outputFormat)
+        ? prev.outputFormat
+        : 'txt';
+      const output = buildTranscriptOutput(prev.file, transcriptFormat, text, chunks, prev.outputUrl);
+      return {
+        ...prev,
+        status: 'done',
+        progress: 100,
+        transcriptText: text,
+        transcriptChunks: chunks,
+        ...output,
+      };
+    });
+  }, []);
 
   const selectFile = useCallback((file: File) => {
     setJob((prev) => ({
@@ -148,7 +172,10 @@ export function useFileConverter(): UseFileConverterReturn {
         ...prev,
         conversionMode: mode,
         outputFormat: nextFormat,
-        status: prev.status === 'done' || prev.status === 'error' ? 'idle' : prev.status,
+        status:
+          prev.status === 'done' || prev.status === 'error' || prev.status === 'paused'
+            ? 'idle'
+            : prev.status,
         progress: 0,
         outputUrl: null,
         outputFileName: null,
@@ -228,6 +255,12 @@ export function useFileConverter(): UseFileConverterReturn {
 
     const runId = ++runIdRef.current;
     const isStale = () => runIdRef.current !== runId;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = new AbortController();
+    const signal = abortControllerRef.current.signal;
+    transcriptionStageRef.current = 'idle';
+    latestTranscriptTextRef.current = '';
+    latestTranscriptChunksRef.current = [];
 
     setJob((prev) => ({
       ...prev,
@@ -255,11 +288,12 @@ export function useFileConverter(): UseFileConverterReturn {
 
       if (job.conversionMode === 'transcription') {
         const hfToken = getHfToken();
+        const openRouterToken = getOpenRouterToken();
         const online = typeof navigator === 'undefined' || navigator.onLine !== false;
-        // AI polish runs after transcription whenever a token is set and we're online.
+        // AI polish runs after transcription whenever either provider token is set and we're online.
         // When it will run, the transcription phases compress into 0–90% of the bar
         // (scaled by 0.9) and polish takes 90–100 — the bar never moves backwards.
-        const willPolish = Boolean(hfToken) && online;
+        const willPolish = Boolean(hfToken || openRouterToken) && online;
         const setProgress = (value: number) => {
           if (isStale()) return;
           setJob((prev) => ({ ...prev, progress: Math.round(willPolish ? value * 0.9 : value) }));
@@ -278,8 +312,10 @@ export function useFileConverter(): UseFileConverterReturn {
 
         // Fill the transcript panel block-by-block. Guarded on 'converting' so a late
         // message cannot resurrect text after reset/error/completion.
-        const onPartialText = (partial: string) =>
+        const onPartialText = (partial: string) => {
+          latestTranscriptTextRef.current = partial;
           setJob((prev) => (prev.status === 'converting' ? { ...prev, transcriptText: partial } : prev));
+        };
 
         // 3. Transcribe. Prefer the HF hosted API when a token is set, the browser is
         //    online, and we are not translating (hosted is transcribe-only auto-detect).
@@ -296,12 +332,14 @@ export function useFileConverter(): UseFileConverterReturn {
         const useHosted = Boolean(hfToken) && online && !job.transcriptionTranslate;
 
         let result: { text: string; chunks: TranscriptChunk[] };
+        transcriptionStageRef.current = 'transcribing';
         if (useHosted) {
           try {
             result = await transcribeViaHf(pcm, {
               token: hfToken,
               onPartialText,
               onProgress: (percent: number) => setProgress(15 + percent * 0.85),
+              signal,
             });
           } catch (hostedError) {
             // The run may have been reset while the hosted request was in flight; the dead
@@ -329,30 +367,66 @@ export function useFileConverter(): UseFileConverterReturn {
         }
         if (isStale()) return;
         const { text: rawText, chunks } = result;
+        latestTranscriptTextRef.current = rawText;
+        latestTranscriptChunksRef.current = chunks;
 
-        // 4. AI polish (90–100%): best-effort cleanup of the plain text via the HF-hosted
-        //    chat model. Only the panel/txt output changes — chunks (srt/vtt) stay raw.
-        //    Any failure keeps the raw text and surfaces a non-blocking notice.
+        // 4. AI polish (90–100%): best-effort cleanup of the plain text. Hugging Face is the
+        //    primary provider whenever its token is present; OpenRouter is used alone otherwise,
+        //    or as the fallback when both tokens are present. Chunks (srt/vtt) stay raw.
         let text = rawText;
         if (willPolish && rawText.trim()) {
-          try {
-            text = await polishTranscript(rawText, {
-              token: hfToken,
-              onProgress: (percent: number) => {
-                if (isStale()) return;
-                setJob((prev) => ({ ...prev, progress: 90 + Math.round(percent * 0.1) }));
-              },
-            });
+          transcriptionStageRef.current = 'polishing';
+          let highestPolishProgress = 90;
+          const onPolishProgress = (percent: number) => {
             if (isStale()) return;
+            highestPolishProgress = Math.max(highestPolishProgress, 90 + Math.round(percent * 0.1));
+            setJob((prev) => ({ ...prev, progress: highestPolishProgress }));
+          };
+          try {
+            if (hfToken) {
+              try {
+                text = await polishTranscript(rawText, {
+                  token: hfToken,
+                  onProgress: onPolishProgress,
+                  onPartialText,
+                  signal,
+                });
+              } catch (hfPolishError) {
+                if (!openRouterToken) throw hfPolishError;
+                console.warn(
+                  '[VideoConverter] Hugging Face AI cleanup failed; retrying with OpenRouter:',
+                  hfPolishError
+                );
+                text = await polishViaOpenRouter(rawText, {
+                  token: openRouterToken,
+                  onProgress: onPolishProgress,
+                  onPartialText,
+                  signal,
+                });
+              }
+            } else {
+              text = await polishViaOpenRouter(rawText, {
+                token: openRouterToken,
+                onProgress: onPolishProgress,
+                onPartialText,
+                signal,
+              });
+            }
+            if (isStale()) return;
+            latestTranscriptTextRef.current = text;
             setJob((prev) => ({ ...prev, transcriptText: text }));
           } catch (polishError) {
             if (isStale()) return;
             console.warn('[VideoConverter] AI transcript polish failed; keeping raw text:', polishError);
-            const notice = describePolishFailure(polishError);
+            const provider = hfToken && !openRouterToken ? 'huggingface' : 'openrouter';
+            const prefix = hfToken && openRouterToken ? 'Hugging Face and OpenRouter cleanup failed. ' : '';
+            const notice = `${prefix}${describePolishFailure(polishError, provider)}`;
             setJob((prev) => ({ ...prev, polishNotice: notice }));
           }
         }
         if (isStale()) return;
+
+        transcriptionStageRef.current = 'idle';
 
         const transcriptFormat: TranscriptFormat = isTranscriptFormat(job.outputFormat)
           ? job.outputFormat
@@ -425,13 +499,107 @@ export function useFileConverter(): UseFileConverterReturn {
     transcribe,
   ]);
 
+  const stopConversion = useCallback(() => {
+    if (job.conversionMode !== 'transcription') return;
+
+    const stage = transcriptionStageRef.current;
+    if (stage !== 'transcribing' && stage !== 'polishing') return;
+
+    runIdRef.current += 1;
+    abortControllerRef.current?.abort();
+
+    if (stage === 'transcribing') {
+      terminate();
+      // The dialog shown for this state lets the user decide whether to clean up the saved
+      // partial transcript or download it untouched.
+      setJob((prev) => ({ ...prev, status: 'paused', transcriptText: latestTranscriptTextRef.current }));
+    } else {
+      // Cleanup already publishes its completed blocks. Preserve that current text immediately.
+      transcriptionStageRef.current = 'idle';
+      finalizeTranscript(latestTranscriptTextRef.current, latestTranscriptChunksRef.current);
+    }
+  }, [finalizeTranscript, job.conversionMode, terminate]);
+
+  const finishStoppedTranscription = useCallback(
+    async (polish: boolean) => {
+      const rawText = latestTranscriptTextRef.current;
+      const chunks = latestTranscriptChunksRef.current;
+      const hfToken = getHfToken();
+      const openRouterToken = getOpenRouterToken();
+      const online = typeof navigator === 'undefined' || navigator.onLine !== false;
+
+      if (!polish || !rawText.trim() || !online || (!hfToken && !openRouterToken)) {
+        transcriptionStageRef.current = 'idle';
+        finalizeTranscript(rawText, chunks);
+        return;
+      }
+
+      const runId = ++runIdRef.current;
+      const isStale = () => runIdRef.current !== runId;
+      abortControllerRef.current = new AbortController();
+      const signal = abortControllerRef.current.signal;
+      transcriptionStageRef.current = 'polishing';
+      setJob((prev) => ({ ...prev, status: 'converting', progress: Math.max(90, prev.progress) }));
+
+      const onPartialText = (partial: string) => {
+        latestTranscriptTextRef.current = partial;
+        setJob((prev) => (prev.status === 'converting' ? { ...prev, transcriptText: partial } : prev));
+      };
+      const onProgress = (percent: number) => {
+        if (!isStale()) setJob((prev) => ({ ...prev, progress: Math.max(prev.progress, 90 + Math.round(percent * 0.1)) }));
+      };
+
+      try {
+        let text: string;
+        if (hfToken) {
+          try {
+            text = await polishTranscript(rawText, { token: hfToken, onProgress, onPartialText, signal });
+          } catch (hfPolishError) {
+            if (!openRouterToken) throw hfPolishError;
+            text = await polishViaOpenRouter(rawText, {
+              token: openRouterToken,
+              onProgress,
+              onPartialText,
+              signal,
+            });
+          }
+        } else {
+          text = await polishViaOpenRouter(rawText, {
+            token: openRouterToken,
+            onProgress,
+            onPartialText,
+            signal,
+          });
+        }
+        if (isStale()) return;
+        latestTranscriptTextRef.current = text;
+        transcriptionStageRef.current = 'idle';
+        finalizeTranscript(text, chunks);
+      } catch (error) {
+        if (isStale()) return;
+        transcriptionStageRef.current = 'idle';
+        const provider = hfToken && !openRouterToken ? 'huggingface' : 'openrouter';
+        const prefix = hfToken && openRouterToken ? 'Hugging Face and OpenRouter cleanup failed. ' : '';
+        setJob((prev) => ({
+          ...prev,
+          polishNotice: `${prefix}${describePolishFailure(error, provider)}`,
+        }));
+        finalizeTranscript(latestTranscriptTextRef.current, chunks);
+      }
+    },
+    [finalizeTranscript]
+  );
+
   const reset = useCallback(() => {
     runIdRef.current += 1;
+    abortControllerRef.current?.abort();
+    terminate();
+    transcriptionStageRef.current = 'idle';
     if (job.outputUrl) URL.revokeObjectURL(job.outputUrl);
     lastVideoFormatRef.current = 'mp4';
     lastTranscriptFormatRef.current = 'txt';
     setJob(initialJob);
-  }, [job.outputUrl]);
+  }, [job.outputUrl, terminate]);
 
   return {
     job,
@@ -446,6 +614,8 @@ export function useFileConverter(): UseFileConverterReturn {
     selectTranscriptionLanguage,
     setTranscriptionTranslate,
     startConversion,
+    stopConversion,
+    finishStoppedTranscription,
     reset,
   };
 }

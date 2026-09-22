@@ -151,8 +151,13 @@ describe('polishTranscript', () => {
     } as unknown as Response);
 
     await expect(
-      polishTranscript('some text', { token: 'hf_x', fetchImpl })
+      polishTranscript('some text', {
+        token: 'hf_x',
+        fetchImpl,
+        retryOptions: { baseDelayMs: 0 },
+      })
     ).rejects.toMatchObject({ name: 'HfPolishError', status: 429 });
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
   });
 });
 
@@ -234,13 +239,26 @@ describe('model fallback ladder', () => {
 
   // A bad token or rate limit fails identically on every model — burning the whole ladder just
   // delays the notice. A 403 is different: it can mean the selected model is gated.
-  it.each([401, 429])('does not retry other models on %s', async (status) => {
-    const fetchImpl = jest.fn().mockResolvedValue(errorResponse(status));
+  it('does not retry another model on a bad token', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(errorResponse(401));
 
     await expect(
       polishTranscript('some text', { token: 'hf_x', fetchImpl })
-    ).rejects.toMatchObject({ status });
+    ).rejects.toMatchObject({ status: 401 });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a 429 with backoff but does not switch models', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(errorResponse(429));
+
+    await expect(
+      polishTranscript('some text', {
+        token: 'hf_x',
+        fetchImpl,
+        retryOptions: { baseDelayMs: 0 },
+      })
+    ).rejects.toMatchObject({ status: 429 });
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
   });
 
   it('advances on 403 because the selected model may be gated', async () => {
