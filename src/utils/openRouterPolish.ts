@@ -2,10 +2,39 @@ import { HfPolishError, POLISH_SYSTEM_PROMPT, splitIntoBlocks } from '@/utils/hf
 import { fetchWithExponentialBackoff, requestSignal, type RetryOptions } from '@/utils/requestRetry';
 
 const OPENROUTER_CHAT_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
-export const OPENROUTER_POLISH_MODEL = 'qwen/qwen3.8-27b:free';
+
+/**
+ * Model fallback ladder, mirroring POLISH_MODELS in hfPolish.ts: try each candidate in order
+ * until one answers, then pin it for the rest of the transcript.
+ *
+ * A single hardcoded free model is fragile — OpenRouter's `:free` tier routes to a shared
+ * upstream pool per model/provider (e.g. the 429 this ladder exists for: "qwen3.8-27b:free is
+ * temporarily rate-limited upstream", `limit_source: upstream_provider_shared_pool`), so
+ * congestion on one model says nothing about the others. Candidates below are spread across
+ * different upstream vendors (Alibaba, Google, NVIDIA) so a single saturated pool doesn't take
+ * out the whole ladder. Each is plain instruction-tuned — not a "thinking"/reasoning variant —
+ * so none should emit chain-of-thought when asked to return only corrected transcript text.
+ */
+export const OPENROUTER_POLISH_MODELS = [
+  'qwen/qwen3.8-27b:free',
+  'google/gemma-4-26b-a4b-it:free',
+  'nvidia/nemotron-3-super-120b-a12b:free',
+] as const;
+
 const REQUEST_TIMEOUT_MS = 60_000;
 const MIN_LENGTH_RATIO = 0.5;
 const MAX_LENGTH_RATIO = 2.0;
+
+/**
+ * Statuses that mean "this model/provider won't serve you" — worth trying the next candidate.
+ * Unlike HF's ladder, 429 advances here: OpenRouter's free tier saturates per upstream provider
+ * sharing one model, not per account, so a 429 on one candidate says nothing about the next.
+ * Only 401 (bad token) fails identically on every candidate and aborts the ladder immediately.
+ */
+function isModelUnavailable(status: number | undefined): boolean {
+  if (status === undefined) return true; // opaque failure: CORS-stripped error, DNS, offline
+  return status !== 401;
+}
 
 export interface OpenRouterPolishOptions {
   token: string;
@@ -33,6 +62,7 @@ export class OpenRouterPolishError extends HfPolishError {
 }
 
 async function requestPolish(
+  model: string,
   body: string,
   token: string,
   doFetch: typeof fetch,
@@ -49,7 +79,7 @@ async function requestPolish(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: OPENROUTER_POLISH_MODEL,
+        model,
         temperature: 0.2,
         max_tokens: Math.min(4096, body.length + 128),
         messages: [
@@ -60,7 +90,7 @@ async function requestPolish(
     }, { ...retryOptions, fetchImpl: doFetch });
   } catch (networkError) {
     throw new OpenRouterPolishError(
-      `OpenRouter polish request could not complete: ${
+      `OpenRouter polish request to ${model} could not complete: ${
         networkError instanceof Error ? networkError.message : String(networkError)
       }`
     );
@@ -69,7 +99,7 @@ async function requestPolish(
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
     throw new OpenRouterPolishError(
-      `OpenRouter polish request failed (${response.status}). ${detail}`.trim(),
+      `OpenRouter polish request to ${model} failed (${response.status}). ${detail}`.trim(),
       response.status
     );
   }
@@ -85,9 +115,9 @@ async function requestPolish(
 }
 
 /**
- * Polishes a transcript through OpenRouter's Qwen 3.8 free model. It uses the same block
- * boundaries and raw-text guardrail as Hugging Face cleanup, so provider fallback cannot
- * truncate or otherwise corrupt a transcript.
+ * Polishes a transcript through OpenRouter's free-tier model ladder (OPENROUTER_POLISH_MODELS).
+ * It uses the same block boundaries and raw-text guardrail as Hugging Face cleanup, so provider
+ * fallback cannot truncate or otherwise corrupt a transcript.
  */
 export async function polishViaOpenRouter(
   text: string,
@@ -95,6 +125,9 @@ export async function polishViaOpenRouter(
 ): Promise<string> {
   const doFetch = options.fetchImpl ?? fetch;
   const blocks = splitIntoBlocks(text);
+
+  /** Index into OPENROUTER_POLISH_MODELS; advances past candidates this account cannot reach. */
+  let modelIndex = 0;
   const polished: string[] = [];
 
   for (let i = 0; i < blocks.length; i++) {
@@ -110,13 +143,35 @@ export async function polishViaOpenRouter(
 
     const lead = block.slice(0, block.indexOf(body));
     const trail = block.slice(lead.length + body.length);
-    const data = await requestPolish(
-      body,
-      options.token,
-      doFetch,
-      options.signal,
-      options.retryOptions
-    );
+
+    // Walk the ladder from the pinned model. A candidate that answers is pinned for every
+    // later block, so the dead ones are probed once per transcript, not once per block.
+    let data: ChatCompletionResponse | null = null;
+    let lastError: OpenRouterPolishError | null = null;
+    for (let m = modelIndex; m < OPENROUTER_POLISH_MODELS.length; m++) {
+      try {
+        data = await requestPolish(
+          OPENROUTER_POLISH_MODELS[m],
+          body,
+          options.token,
+          doFetch,
+          options.signal,
+          options.retryOptions
+        );
+        modelIndex = m;
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error instanceof OpenRouterPolishError ? error : new OpenRouterPolishError(String(error));
+        if (!isModelUnavailable(lastError.status)) break;
+        console.warn(
+          `[VideoConverter] OpenRouter polish model ${OPENROUTER_POLISH_MODELS[m]} unavailable; trying next:`,
+          lastError.message
+        );
+      }
+    }
+    if (!data) throw lastError ?? new OpenRouterPolishError('OpenRouter polish failed.');
+
     const choice = data.choices?.[0];
     const candidate = (choice?.message?.content ?? '').trim();
     const ratio = candidate.length / body.length;
