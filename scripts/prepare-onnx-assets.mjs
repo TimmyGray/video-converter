@@ -1,4 +1,4 @@
-import { cp, mkdir, readdir } from 'node:fs/promises';
+import { cp, mkdir, readdir, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
@@ -33,9 +33,12 @@ if (wanted.length === 0) {
 await mkdir(targetDir, { recursive: true });
 for (const name of wanted) {
   const dest = path.join(targetDir, name);
-  // Skip files already copied so `predev` stays fast on repeat runs.
-  if (existsSync(dest)) continue;
-  await cp(path.join(sourceDir, name), dest);
+  const source = path.join(sourceDir, name);
+  // Skip files already copied so `predev` stays fast on repeat runs — but only when they match:
+  // the file names carry no version, so after an onnxruntime-web bump a stale same-named binary
+  // would otherwise keep being served and mismatch the JS glue that loads it.
+  if (existsSync(dest) && (await readFile(dest)).equals(await readFile(source))) continue;
+  await cp(source, dest);
 }
 
 console.log(`ONNX Runtime WASM assets prepared: ${targetDir} (${wanted.length} files)`);

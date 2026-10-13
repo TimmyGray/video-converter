@@ -73,6 +73,11 @@ export interface ConversionJob {
    */
   hostedTranscriptionNotice: string | null;
   /**
+   * Non-fatal warning listing stretches the on-device engine skipped because it hung or produced
+   * runaway output. Mirrors hostedTranscriptionNotice semantics.
+   */
+  localTranscriptionNotice: string | null;
+  /**
    * Non-fatal warning shown when the AI polish pass failed and the transcript was left
    * unpolished. Mirrors hostedTranscriptionNotice semantics.
    */

@@ -49,11 +49,14 @@ jest.mock('@/utils/hfToken', () => ({
 
 const mockTranscribeViaHf = jest.fn();
 const mockDescribeHfFailure = jest.fn(
-  (error: unknown) => `described: ${error instanceof Error ? error.message : String(error)}`
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  (error: unknown, _resumedAtSeconds?: number) =>
+    `described: ${error instanceof Error ? error.message : String(error)}`
 );
 jest.mock('@/utils/hfTranscribe', () => ({
   transcribeViaHf: (...args: unknown[]) => mockTranscribeViaHf(...args),
-  describeHfFailure: (error: unknown) => mockDescribeHfFailure(error),
+  describeHfFailure: (error: unknown, resumedAtSeconds?: number) =>
+    mockDescribeHfFailure(error, resumedAtSeconds),
 }));
 
 const mockPolishTranscript = jest.fn();
@@ -215,9 +218,11 @@ describe('useFileConverter', () => {
     expect(mockTranscribe).toHaveBeenCalledWith(expect.any(Float32Array), {
       language: null,
       translate: false,
+      startSegment: 0,
       onModelProgress: expect.any(Function),
       onTranscribeProgress: expect.any(Function),
       onPartialText: expect.any(Function),
+      onSegmentSkipped: expect.any(Function),
     });
     expect(result.current.job.status).toBe('done');
     expect(result.current.job.transcriptText).toBe('hello world');
@@ -241,9 +246,11 @@ describe('useFileConverter', () => {
     expect(mockTranscribe).toHaveBeenCalledWith(expect.any(Float32Array), {
       language: 'spanish',
       translate: true,
+      startSegment: 0,
       onModelProgress: expect.any(Function),
       onTranscribeProgress: expect.any(Function),
       onPartialText: expect.any(Function),
+      onSegmentSkipped: expect.any(Function),
     });
   });
 
@@ -348,10 +355,75 @@ describe('useFileConverter', () => {
       await result.current.startConversion();
     });
 
-    expect(mockDescribeHfFailure).toHaveBeenCalledWith(expect.any(Error));
+    expect(mockDescribeHfFailure).toHaveBeenCalledWith(expect.any(Error), 0);
     expect(mockDescribeHfFailure.mock.invocationCallOrder[0]).toBeLessThan(
       mockTranscribe.mock.invocationCallOrder[0]
     );
+  });
+
+  it('keeps the hosted part and resumes locally after the last finished segment', async () => {
+    mockGetHfToken.mockReturnValue('hf_x');
+    mockTranscribeViaHf.mockImplementationOnce(
+      async (_pcm: Float32Array, options: { onCheckpoint: (checkpoint: unknown) => void }) => {
+        options.onCheckpoint({
+          segments: 2,
+          text: 'hosted part',
+          chunks: [{ text: 'hosted part', timestamp: [0, 1] }],
+        });
+        throw new Error('rate limited');
+      }
+    );
+    mockTranscribe.mockImplementationOnce(
+      async (_pcm: Float32Array, options: { onPartialText: (text: string) => void }) => {
+        options.onPartialText('local part');
+        return { text: 'local part', chunks: [{ text: 'local part', timestamp: [120, 121] }] };
+      }
+    );
+
+    const { result } = renderHook(() => useFileConverter());
+    const file = new File([''], 'lecture.mp4', { type: 'video/mp4' });
+    act(() => result.current.selectFile(file));
+    act(() => result.current.selectConversionMode('transcription'));
+
+    await act(async () => {
+      await result.current.startConversion();
+    });
+
+    expect(mockTranscribe).toHaveBeenCalledWith(
+      expect.any(Float32Array),
+      expect.objectContaining({ startSegment: 2, onModelProgress: undefined })
+    );
+    expect(mockDescribeHfFailure).toHaveBeenCalledWith(expect.any(Error), 120);
+    expect(result.current.job.transcriptText).toBe('hosted part local part');
+    expect(result.current.job.transcriptChunks).toEqual([
+      { text: 'hosted part', timestamp: [0, 1] },
+      { text: 'local part', timestamp: [120, 121] },
+    ]);
+    expect(result.current.job.status).toBe('done');
+  });
+
+  it('surfaces stretches the local engine skipped and clears the notice on reset', async () => {
+    mockTranscribe.mockImplementationOnce(
+      async (_pcm: Float32Array, options: { onSegmentSkipped: (segment: unknown) => void }) => {
+        options.onSegmentSkipped({ index: 1, startSeconds: 60, endSeconds: 120, reason: 'stalled' });
+        return { text: 'partial', chunks: [] };
+      }
+    );
+
+    const { result } = renderHook(() => useFileConverter());
+    const file = new File([''], 'lecture.mp4', { type: 'video/mp4' });
+    act(() => result.current.selectFile(file));
+    act(() => result.current.selectConversionMode('transcription'));
+
+    await act(async () => {
+      await result.current.startConversion();
+    });
+
+    expect(result.current.job.localTranscriptionNotice).toMatch(/skipped 1:00–2:00/);
+    expect(result.current.job.status).toBe('done');
+
+    act(() => result.current.reset());
+    expect(result.current.job.localTranscriptionNotice).toBeNull();
   });
 
   it('leaves the notice null when hosted transcription succeeds', async () => {

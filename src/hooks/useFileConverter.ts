@@ -15,7 +15,9 @@ import { useTranscriber } from '@/hooks/useTranscriber';
 import { getFormatInfo, getOutputFileName, isValidSourceFile } from '@/utils/formatUtils';
 import { decodeWavToPcm16k } from '@/utils/audioUtils';
 import { getHfToken, getOpenRouterToken } from '@/utils/hfToken';
-import { describeHfFailure, transcribeViaHf } from '@/utils/hfTranscribe';
+import { describeHfFailure, transcribeViaHf, type HfTranscribeCheckpoint } from '@/utils/hfTranscribe';
+import { describeSkippedSegments, type SkippedSegment } from '@/utils/localTranscriptionSession';
+import { SEGMENT_SECONDS, joinTranscriptText } from '@/utils/transcriptionSegments';
 import { describePolishFailure, polishTranscript } from '@/utils/hfPolish';
 import { polishViaOpenRouter } from '@/utils/openRouterPolish';
 import { serializeTranscript } from '@/utils/subtitleUtils';
@@ -103,6 +105,7 @@ const initialJob: ConversionJob = {
   transcriptText: null,
   transcriptChunks: null,
   hostedTranscriptionNotice: null,
+  localTranscriptionNotice: null,
   polishNotice: null,
 };
 
@@ -188,6 +191,7 @@ export function useFileConverter(): UseFileConverterReturn {
         errorMessage: null,
         // Notices describe the invalidated run; they must not reappear beside a fresh idle card.
         hostedTranscriptionNotice: null,
+        localTranscriptionNotice: null,
         polishNotice: null,
       };
     });
@@ -250,6 +254,7 @@ export function useFileConverter(): UseFileConverterReturn {
         transcriptChunks: null,
         errorMessage: null,
         hostedTranscriptionNotice: null,
+        localTranscriptionNotice: null,
         polishNotice: null,
       };
     });
@@ -311,6 +316,7 @@ export function useFileConverter(): UseFileConverterReturn {
       transcriptText: null,
       transcriptChunks: null,
       hostedTranscriptionNotice: null,
+      localTranscriptionNotice: null,
       polishNotice: null,
     }));
 
@@ -355,28 +361,58 @@ export function useFileConverter(): UseFileConverterReturn {
           setJob((prev) => (prev.status === 'converting' ? { ...prev, transcriptText: partial } : prev));
         };
 
+        // Segments the local engine had to give up on (hung or runaway). Surfaced live as a
+        // non-blocking notice; the rest of the transcript still completes.
+        const skippedSegments: SkippedSegment[] = [];
+        const onSegmentSkipped = (segment: SkippedSegment) => {
+          skippedSegments.push(segment);
+          if (isStale()) return;
+          setJob((prev) => ({ ...prev, localTranscriptionNotice: describeSkippedSegments(skippedSegments) }));
+        };
+
         // 3. Transcribe. Prefer the HF hosted API when a token is set, the browser is
         //    online, and we are not translating (hosted is transcribe-only auto-detect).
-        //    Any hosted failure falls back to the local worker so a transcript is always produced.
-        const runLocal = () =>
-          transcribe(pcm, {
+        //    Any hosted failure falls back to the local worker so a transcript is always produced;
+        //    segments the hosted engine already finished are kept and the local run resumes after them.
+        const runLocal = async (resume: HfTranscribeCheckpoint | null) => {
+          const startSegment = resume?.segments ?? 0;
+          const prefixText = resume?.text ?? '';
+          const local = await transcribe(pcm, {
             language: job.transcriptionLanguage,
             translate: job.transcriptionTranslate,
-            onModelProgress: (percent: number) => setProgress(15 + percent * 0.65),
-            onTranscribeProgress: (percent: number) => setProgress(80 + percent * 0.2),
-            onPartialText,
+            startSegment,
+            // A fresh run shows the model download in 15–80% and decoding in 80–100%. A resumed
+            // run maps whole-file coverage onto 15–100% instead, so the bar continues from where
+            // the hosted engine left it rather than rewinding.
+            onModelProgress: resume ? undefined : (percent: number) => setProgress(15 + percent * 0.65),
+            onTranscribeProgress: resume
+              ? (percent: number) => setProgress(15 + percent * 0.85)
+              : (percent: number) => setProgress(80 + percent * 0.2),
+            onPartialText: (partial: string) => onPartialText(joinTranscriptText([prefixText, partial])),
+            onSegmentSkipped,
           });
+          if (!resume) return local;
+          return {
+            text: joinTranscriptText([prefixText, local.text]),
+            chunks: [...resume.chunks, ...local.chunks],
+          };
+        };
 
         const useHosted = Boolean(hfToken) && online && !job.transcriptionTranslate;
 
         let result: { text: string; chunks: TranscriptChunk[] };
         transcriptionStageRef.current = 'transcribing';
         if (useHosted) {
+          // Held in an object: TypeScript does not see the callback's writes to a plain `let`.
+          const hosted: { checkpoint: HfTranscribeCheckpoint | null } = { checkpoint: null };
           try {
             result = await transcribeViaHf(pcm, {
               token: hfToken,
               onPartialText,
               onProgress: (percent: number) => setProgress(15 + percent * 0.85),
+              onCheckpoint: (checkpoint) => {
+                hosted.checkpoint = checkpoint;
+              },
               signal,
             });
           } catch (hostedError) {
@@ -387,21 +423,21 @@ export function useFileConverter(): UseFileConverterReturn {
               '[VideoConverter] HF hosted transcription failed; falling back to local worker:',
               hostedError
             );
+            const resume = hosted.checkpoint && hosted.checkpoint.segments > 0 ? hosted.checkpoint : null;
             // Surface the reason immediately — before the local run starts — so the user sees why
-            // the run restarted on-device. Purely informational: the job keeps going.
-            // Progress rewinds to the post-decode mark because runLocal re-does the whole waveform,
-            // and any partial hosted text is dropped so the panel does not mix the two engines.
-            const notice = describeHfFailure(hostedError);
+            // the run continued on-device. Purely informational: the job keeps going. Without a
+            // checkpoint the local run starts over, so progress rewinds to the post-decode mark.
+            const notice = describeHfFailure(hostedError, resume ? resume.segments * SEGMENT_SECONDS : 0);
             setJob((prev) => ({
               ...prev,
               hostedTranscriptionNotice: notice,
-              transcriptText: null,
+              transcriptText: resume ? resume.text : null,
             }));
-            setProgress(15);
-            result = await runLocal();
+            if (!resume) setProgress(15);
+            result = await runLocal(resume);
           }
         } else {
-          result = await runLocal();
+          result = await runLocal(null);
         }
         if (isStale()) return;
         const { text: rawText, chunks } = result;

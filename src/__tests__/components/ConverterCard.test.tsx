@@ -106,6 +106,7 @@ function createJob(overrides: Partial<ConversionJob> = {}): ConversionJob {
     transcriptText: null,
     transcriptChunks: null,
     hostedTranscriptionNotice: null,
+    localTranscriptionNotice: null,
     polishNotice: null,
     ...overrides,
   };
@@ -369,6 +370,22 @@ describe('ConverterCard', () => {
 
       expect(screen.getByTestId('hosted-transcription-notice')).toHaveTextContent(/on-device/i);
       expect(screen.getByTestId('transcript-text')).toHaveTextContent('Hello there, world.');
+    });
+
+    it('renders the local-transcription notice for skipped stretches', () => {
+      mockConverterState(
+        createJob({
+          conversionMode: 'transcription',
+          outputFormat: 'txt',
+          status: 'converting',
+          progress: 50,
+          localTranscriptionNotice: 'The on-device engine got stuck and skipped 12:00–13:00.',
+        })
+      );
+
+      render(<ConverterCard />);
+
+      expect(screen.getByTestId('local-transcription-notice')).toHaveTextContent(/skipped 12:00–13:00/);
     });
 
     it('hides the notice when there is nothing to report', () => {

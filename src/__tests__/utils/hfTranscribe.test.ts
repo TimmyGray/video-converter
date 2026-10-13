@@ -63,6 +63,30 @@ describe('transcribeViaHf', () => {
     expect(result.chunks[1].timestamp).toEqual([60, 61]);
   });
 
+  it('checkpoints after every successful slice so a failure can resume where it stopped', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ text: 'first', chunks: [{ text: 'first', timestamp: [0, 1] }] }))
+      .mockResolvedValueOnce({
+        ok: false,
+        // Not a retried status, so the second slice fails immediately.
+        status: 401,
+        text: () => Promise.resolve('unauthorized'),
+      } as unknown as Response);
+    const onCheckpoint = jest.fn();
+
+    await expect(
+      transcribeViaHf(new Float32Array(SEGMENT_SAMPLES + 1), { token: 'hf_x', fetchImpl, onCheckpoint })
+    ).rejects.toMatchObject({ status: 401 });
+
+    expect(onCheckpoint).toHaveBeenCalledTimes(1);
+    expect(onCheckpoint).toHaveBeenCalledWith({
+      segments: 1,
+      text: 'first',
+      chunks: [{ text: 'first', timestamp: [0, 1] }],
+    });
+  });
+
   it('throws on a non-ok response so the caller can fall back', async () => {
     const fetchImpl = jest.fn().mockResolvedValue({
       ok: false,
@@ -112,6 +136,12 @@ describe('describeHfFailure', () => {
 
   it('falls back to a generic message with the status for other codes', () => {
     expect(describeHfFailure(new HfTranscribeError('boom', 500))).toContain('500');
+  });
+
+  it('says where the hosted transcript was kept when the local run resumed mid-file', () => {
+    expect(describeHfFailure(new HfTranscribeError('boom', 429), 720)).toMatch(
+      /rate limit.*up to 12:00.*on-device/i
+    );
   });
 
   it('always states that transcription continued on-device', () => {

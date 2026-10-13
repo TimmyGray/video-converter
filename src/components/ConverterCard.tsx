@@ -477,6 +477,18 @@ export default function ConverterCard() {
             </Alert>
           )}
 
+          {/* Non-blocking: the on-device engine skipped stretches it got stuck on. */}
+          {isTranscriptionMode && job.localTranscriptionNotice && (
+            <Alert
+              severity="warning"
+              variant="outlined"
+              data-testid="local-transcription-notice"
+              sx={{ mt: 3, borderRadius: 2, alignItems: 'center' }}
+            >
+              {job.localTranscriptionNotice}
+            </Alert>
+          )}
+
           {/* Non-blocking: AI polish failed, raw transcript kept. Mirrors the hosted notice. */}
           {isTranscriptionMode && job.polishNotice && (
             <Alert
