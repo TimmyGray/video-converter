@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
-import { ConversionMode, CropSettings, VideoFormat } from '@/types';
+import { ConversionMode, CropSettings, TrimRange, VideoFormat } from '@/types';
 import { getOutputFileName, getFormatInfo } from '@/utils/formatUtils';
 import { getCommandAttempts, getWavNormalizeCommand } from '@/hooks/ffmpegCommandPlanner';
 
@@ -33,9 +33,14 @@ export interface UseFFmpegReturn {
     outputFormat: VideoFormat,
     conversionMode: ConversionMode,
     cropSettings: CropSettings,
-    onProgress: (progress: number) => void
+    onProgress: (progress: number) => void,
+    trim?: TrimRange | null
   ) => Promise<TranscodeResult>;
-  extractPcmWav: (file: File, onProgress: (progress: number) => void) => Promise<Blob>;
+  extractPcmWav: (
+    file: File,
+    onProgress: (progress: number) => void,
+    trim?: TrimRange | null
+  ) => Promise<Blob>;
 }
 
 function getCropFilter(cropSettings: CropSettings): string | null {
@@ -183,7 +188,8 @@ export function useFFmpeg(): UseFFmpegReturn {
       outputFormat: VideoFormat,
       conversionMode: ConversionMode,
       cropSettings: CropSettings,
-      onProgress: (progress: number) => void
+      onProgress: (progress: number) => void,
+      trim: TrimRange | null = null
     ): Promise<TranscodeResult> => {
       const ffmpeg = ffmpegRef.current;
       if (!ffmpeg) throw new Error('FFmpeg not loaded');
@@ -208,7 +214,14 @@ export function useFFmpeg(): UseFFmpegReturn {
         await ffmpeg.writeFile(inputName, await fetchFile(file));
 
         const cropFilter = getCropFilter(cropSettings);
-        const attempts = getCommandAttempts(inputName, file.name, outputFormat, outputFileName, cropFilter);
+        const attempts = getCommandAttempts(
+          inputName,
+          file.name,
+          outputFormat,
+          outputFileName,
+          cropFilter,
+          trim
+        );
         let exitCode = -1;
 
         for (const command of attempts) {
@@ -257,7 +270,11 @@ export function useFFmpeg(): UseFFmpegReturn {
   );
 
   const extractPcmWav = useCallback(
-    async (file: File, onProgress: (progress: number) => void): Promise<Blob> => {
+    async (
+      file: File,
+      onProgress: (progress: number) => void,
+      trim: TrimRange | null = null
+    ): Promise<Blob> => {
       const ffmpeg = ffmpegRef.current;
       if (!ffmpeg) throw new Error('FFmpeg not loaded');
 
@@ -280,7 +297,7 @@ export function useFFmpeg(): UseFFmpegReturn {
       try {
         await ffmpeg.writeFile(inputName, await fetchFile(file));
 
-        const exitCode = await ffmpeg.exec(getWavNormalizeCommand(inputName, outputName));
+        const exitCode = await ffmpeg.exec(getWavNormalizeCommand(inputName, outputName, trim));
         if (exitCode !== 0) {
           const relevant = logs
             .filter((line) => /error|invalid|unknown|no such|unsupported|codec/i.test(line))

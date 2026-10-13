@@ -7,6 +7,7 @@ import {
   CropMode,
   TranscriptChunk,
   TranscriptFormat,
+  TrimRange,
   VideoFormat,
 } from '@/types';
 import { useFFmpeg } from '@/hooks/useFFmpeg';
@@ -14,7 +15,9 @@ import { useTranscriber } from '@/hooks/useTranscriber';
 import { getFormatInfo, getOutputFileName, isValidSourceFile } from '@/utils/formatUtils';
 import { decodeWavToPcm16k } from '@/utils/audioUtils';
 import { getHfToken, getOpenRouterToken } from '@/utils/hfToken';
-import { describeHfFailure, transcribeViaHf } from '@/utils/hfTranscribe';
+import { describeHfFailure, transcribeViaHf, type HfTranscribeCheckpoint } from '@/utils/hfTranscribe';
+import { describeSkippedSegments, type SkippedSegment } from '@/utils/localTranscriptionSession';
+import { SEGMENT_SECONDS, joinTranscriptText } from '@/utils/transcriptionSegments';
 import { describePolishFailure, polishTranscript } from '@/utils/hfPolish';
 import { polishViaOpenRouter } from '@/utils/openRouterPolish';
 import { serializeTranscript } from '@/utils/subtitleUtils';
@@ -65,6 +68,7 @@ export interface UseFileConverterReturn {
   selectFormat: (format: VideoFormat) => void;
   selectCropMode: (mode: CropMode) => void;
   updateCustomCrop: (field: 'width' | 'height' | 'x' | 'y', value: string) => void;
+  applyTrim: (range: TrimRange | null) => void;
   selectTranscriptionLanguage: (language: string | null) => void;
   setTranscriptionTranslate: (translate: boolean) => void;
   startConversion: () => Promise<void>;
@@ -86,6 +90,7 @@ const initialJob: ConversionJob = {
       y: '0',
     },
   },
+  trimRange: null,
   status: 'idle',
   progress: 0,
   outputUrl: null,
@@ -100,6 +105,7 @@ const initialJob: ConversionJob = {
   transcriptText: null,
   transcriptChunks: null,
   hostedTranscriptionNotice: null,
+  localTranscriptionNotice: null,
   polishNotice: null,
 };
 
@@ -185,6 +191,7 @@ export function useFileConverter(): UseFileConverterReturn {
         errorMessage: null,
         // Notices describe the invalidated run; they must not reappear beside a fresh idle card.
         hostedTranscriptionNotice: null,
+        localTranscriptionNotice: null,
         polishNotice: null,
       };
     });
@@ -216,6 +223,40 @@ export function useFileConverter(): UseFileConverterReturn {
       }
 
       return { ...prev, outputFormat: format };
+    });
+  }, []);
+
+  const applyTrim = useCallback((range: TrimRange | null) => {
+    setJob((prev) => {
+      const unchanged =
+        prev.trimRange === range ||
+        (prev.trimRange !== null &&
+          range !== null &&
+          prev.trimRange.start === range.start &&
+          prev.trimRange.end === range.end);
+      if (unchanged) return prev;
+
+      // A different region invalidates any prior output/transcript.
+      if (prev.outputUrl) URL.revokeObjectURL(prev.outputUrl);
+
+      return {
+        ...prev,
+        trimRange: range,
+        status:
+          prev.status === 'done' || prev.status === 'error' || prev.status === 'paused'
+            ? 'idle'
+            : prev.status,
+        progress: 0,
+        outputUrl: null,
+        outputFileName: null,
+        outputSizeBytes: null,
+        transcriptText: null,
+        transcriptChunks: null,
+        errorMessage: null,
+        hostedTranscriptionNotice: null,
+        localTranscriptionNotice: null,
+        polishNotice: null,
+      };
     });
   }, []);
 
@@ -275,6 +316,7 @@ export function useFileConverter(): UseFileConverterReturn {
       transcriptText: null,
       transcriptChunks: null,
       hostedTranscriptionNotice: null,
+      localTranscriptionNotice: null,
       polishNotice: null,
     }));
 
@@ -300,8 +342,10 @@ export function useFileConverter(): UseFileConverterReturn {
         };
 
         // 1. Normalize to 16 kHz mono WAV via FFmpeg (0–15% of the transcription span).
-        const wavBlob = await extractPcmWav(job.file, (progress: number) =>
-          setProgress(progress * 0.15)
+        const wavBlob = await extractPcmWav(
+          job.file,
+          (progress: number) => setProgress(progress * 0.15),
+          job.trimRange
         );
         if (isStale()) return;
 
@@ -317,28 +361,58 @@ export function useFileConverter(): UseFileConverterReturn {
           setJob((prev) => (prev.status === 'converting' ? { ...prev, transcriptText: partial } : prev));
         };
 
+        // Segments the local engine had to give up on (hung or runaway). Surfaced live as a
+        // non-blocking notice; the rest of the transcript still completes.
+        const skippedSegments: SkippedSegment[] = [];
+        const onSegmentSkipped = (segment: SkippedSegment) => {
+          skippedSegments.push(segment);
+          if (isStale()) return;
+          setJob((prev) => ({ ...prev, localTranscriptionNotice: describeSkippedSegments(skippedSegments) }));
+        };
+
         // 3. Transcribe. Prefer the HF hosted API when a token is set, the browser is
         //    online, and we are not translating (hosted is transcribe-only auto-detect).
-        //    Any hosted failure falls back to the local worker so a transcript is always produced.
-        const runLocal = () =>
-          transcribe(pcm, {
+        //    Any hosted failure falls back to the local worker so a transcript is always produced;
+        //    segments the hosted engine already finished are kept and the local run resumes after them.
+        const runLocal = async (resume: HfTranscribeCheckpoint | null) => {
+          const startSegment = resume?.segments ?? 0;
+          const prefixText = resume?.text ?? '';
+          const local = await transcribe(pcm, {
             language: job.transcriptionLanguage,
             translate: job.transcriptionTranslate,
-            onModelProgress: (percent: number) => setProgress(15 + percent * 0.65),
-            onTranscribeProgress: (percent: number) => setProgress(80 + percent * 0.2),
-            onPartialText,
+            startSegment,
+            // A fresh run shows the model download in 15–80% and decoding in 80–100%. A resumed
+            // run maps whole-file coverage onto 15–100% instead, so the bar continues from where
+            // the hosted engine left it rather than rewinding.
+            onModelProgress: resume ? undefined : (percent: number) => setProgress(15 + percent * 0.65),
+            onTranscribeProgress: resume
+              ? (percent: number) => setProgress(15 + percent * 0.85)
+              : (percent: number) => setProgress(80 + percent * 0.2),
+            onPartialText: (partial: string) => onPartialText(joinTranscriptText([prefixText, partial])),
+            onSegmentSkipped,
           });
+          if (!resume) return local;
+          return {
+            text: joinTranscriptText([prefixText, local.text]),
+            chunks: [...resume.chunks, ...local.chunks],
+          };
+        };
 
         const useHosted = Boolean(hfToken) && online && !job.transcriptionTranslate;
 
         let result: { text: string; chunks: TranscriptChunk[] };
         transcriptionStageRef.current = 'transcribing';
         if (useHosted) {
+          // Held in an object: TypeScript does not see the callback's writes to a plain `let`.
+          const hosted: { checkpoint: HfTranscribeCheckpoint | null } = { checkpoint: null };
           try {
             result = await transcribeViaHf(pcm, {
               token: hfToken,
               onPartialText,
               onProgress: (percent: number) => setProgress(15 + percent * 0.85),
+              onCheckpoint: (checkpoint) => {
+                hosted.checkpoint = checkpoint;
+              },
               signal,
             });
           } catch (hostedError) {
@@ -349,21 +423,21 @@ export function useFileConverter(): UseFileConverterReturn {
               '[VideoConverter] HF hosted transcription failed; falling back to local worker:',
               hostedError
             );
+            const resume = hosted.checkpoint && hosted.checkpoint.segments > 0 ? hosted.checkpoint : null;
             // Surface the reason immediately — before the local run starts — so the user sees why
-            // the run restarted on-device. Purely informational: the job keeps going.
-            // Progress rewinds to the post-decode mark because runLocal re-does the whole waveform,
-            // and any partial hosted text is dropped so the panel does not mix the two engines.
-            const notice = describeHfFailure(hostedError);
+            // the run continued on-device. Purely informational: the job keeps going. Without a
+            // checkpoint the local run starts over, so progress rewinds to the post-decode mark.
+            const notice = describeHfFailure(hostedError, resume ? resume.segments * SEGMENT_SECONDS : 0);
             setJob((prev) => ({
               ...prev,
               hostedTranscriptionNotice: notice,
-              transcriptText: null,
+              transcriptText: resume ? resume.text : null,
             }));
-            setProgress(15);
-            result = await runLocal();
+            if (!resume) setProgress(15);
+            result = await runLocal(resume);
           }
         } else {
-          result = await runLocal();
+          result = await runLocal(null);
         }
         if (isStale()) return;
         const { text: rawText, chunks } = result;
@@ -452,7 +526,8 @@ export function useFileConverter(): UseFileConverterReturn {
         job.outputFormat,
         job.conversionMode,
         job.cropSettings,
-        (progress: number) => setJob((prev) => ({ ...prev, progress }))
+        (progress: number) => setJob((prev) => ({ ...prev, progress })),
+        job.trimRange
       );
       const durationMs = Math.max(1, Math.round(performance.now() - conversionStart));
 
@@ -489,6 +564,7 @@ export function useFileConverter(): UseFileConverterReturn {
     job.outputFormat,
     job.conversionMode,
     job.cropSettings,
+    job.trimRange,
     job.transcriptionLanguage,
     job.transcriptionTranslate,
     isLoaded,
@@ -611,6 +687,7 @@ export function useFileConverter(): UseFileConverterReturn {
     selectFormat,
     selectCropMode,
     updateCustomCrop,
+    applyTrim,
     selectTranscriptionLanguage,
     setTranscriptionTranslate,
     startConversion,

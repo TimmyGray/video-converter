@@ -32,6 +32,12 @@ export interface CropSettings {
   };
 }
 
+/** A selected section of the source media, in seconds from the start of the file. */
+export interface TrimRange {
+  start: number;
+  end: number;
+}
+
 export type ConversionStatus =
   | 'idle'
   | 'loading'
@@ -45,6 +51,8 @@ export interface ConversionJob {
   conversionMode: ConversionMode;
   outputFormat: VideoFormat;
   cropSettings: CropSettings;
+  /** Applied cut region; null processes the whole file. */
+  trimRange: TrimRange | null;
   status: ConversionStatus;
   progress: number;
   outputUrl: string | null;
@@ -64,6 +72,11 @@ export interface ConversionJob {
    * worker took over. Never blocks the job — the transcript still completes.
    */
   hostedTranscriptionNotice: string | null;
+  /**
+   * Non-fatal warning listing stretches the on-device engine skipped because it hung or produced
+   * runaway output. Mirrors hostedTranscriptionNotice semantics.
+   */
+  localTranscriptionNotice: string | null;
   /**
    * Non-fatal warning shown when the AI polish pass failed and the transcript was left
    * unpolished. Mirrors hostedTranscriptionNotice semantics.

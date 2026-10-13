@@ -5,6 +5,7 @@ import {
   isValidAudioFile,
   isValidSourceFile,
   getOutputFileName,
+  formatClock,
   FORMAT_INFO,
 } from '@/utils/formatUtils';
 
@@ -173,5 +174,25 @@ describe('FORMAT_INFO completeness', () => {
       expect(info.color).toBeTruthy();
       expect(info.description).toBeTruthy();
     }
+  });
+});
+
+describe('formatClock', () => {
+  it('formats minutes and seconds', () => {
+    expect(formatClock(0)).toBe('0:00');
+    expect(formatClock(65)).toBe('1:05');
+  });
+
+  it('adds an hours field from one hour', () => {
+    expect(formatClock(3725)).toBe('1:02:05');
+  });
+
+  it('optionally shows tenths', () => {
+    expect(formatClock(5.26, true)).toBe('0:05.3');
+  });
+
+  it('treats invalid or negative values as zero', () => {
+    expect(formatClock(NaN)).toBe('0:00');
+    expect(formatClock(-4)).toBe('0:00');
   });
 });

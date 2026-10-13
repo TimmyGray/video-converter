@@ -1,9 +1,15 @@
 import type { TranscriptChunk } from '@/types';
 import { pcm16kToWavBytes } from '@/utils/audioUtils';
+import { formatClock } from '@/utils/formatUtils';
 import { fetchWithExponentialBackoff, requestSignal } from '@/utils/requestRetry';
+import {
+  SEGMENT_SAMPLES,
+  SEGMENT_SECONDS,
+  countSegments,
+  joinTranscriptText,
+  offsetChunks,
+} from '@/utils/transcriptionSegments';
 
-const SAMPLE_RATE = 16_000;
-const SEGMENT_SECONDS = 60;
 const HF_ENDPOINT =
   'https://router.huggingface.co/hf-inference/models/openai/whisper-large-v3';
 
@@ -11,10 +17,22 @@ export interface HfTranscribeOptions {
   token: string;
   onPartialText?: (text: string) => void;
   onProgress?: (percent: number) => void;
+  /**
+   * Called after every slice that succeeded with everything transcribed so far. When a later
+   * slice fails, the last checkpoint tells the caller where the local engine can resume.
+   */
+  onCheckpoint?: (checkpoint: HfTranscribeCheckpoint) => void;
   /** Cancels the current hosted request and any scheduled rate-limit retry. */
   signal?: AbortSignal;
   /** Injectable for tests; defaults to global fetch. */
   fetchImpl?: typeof fetch;
+}
+
+export interface HfTranscribeCheckpoint {
+  /** Number of leading 60s segments fully transcribed. */
+  segments: number;
+  text: string;
+  chunks: TranscriptChunk[];
 }
 
 interface HfResponse {
@@ -42,9 +60,11 @@ const FALLBACK_SUFFIX = 'Transcribed with the on-device model instead (lower acc
 
 /**
  * Maps a hosted-transcription failure to a single user-facing sentence explaining what went
- * wrong and that the local fallback took over. Pure — safe to unit test and to call from render.
+ * wrong and that the local fallback took over. `resumedAtSeconds` > 0 means the hosted part up to
+ * that point was kept and only the rest ran on-device. Pure — safe to unit test and to call from
+ * render.
  */
-export function describeHfFailure(error: unknown): string {
+export function describeHfFailure(error: unknown, resumedAtSeconds = 0): string {
   const status = error instanceof HfTranscribeError ? error.status : undefined;
 
   let cause: string;
@@ -60,7 +80,11 @@ export function describeHfFailure(error: unknown): string {
     cause = 'Could not reach Hugging Face — check your network connection.';
   }
 
-  return `${cause} ${FALLBACK_SUFFIX}`;
+  const suffix =
+    resumedAtSeconds > 0
+      ? `Kept the hosted transcript up to ${formatClock(resumedAtSeconds)}; the rest was transcribed with the on-device model (lower accuracy).`
+      : FALLBACK_SUFFIX;
+  return `${cause} ${suffix}`;
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -84,16 +108,14 @@ export async function transcribeViaHf(
   options: HfTranscribeOptions
 ): Promise<{ text: string; chunks: TranscriptChunk[] }> {
   const doFetch = options.fetchImpl ?? fetch;
-  const segmentSamples = SEGMENT_SECONDS * SAMPLE_RATE;
-  const totalSegments = Math.max(1, Math.ceil(pcm.length / segmentSamples));
+  const totalSegments = countSegments(pcm.length);
 
-  let fullText = '';
+  const texts: string[] = [];
   const allChunks: TranscriptChunk[] = [];
 
   for (let i = 0; i < totalSegments; i++) {
-    const start = i * segmentSamples;
-    const slice = pcm.subarray(start, Math.min(start + segmentSamples, pcm.length));
-    const offsetSeconds = start / SAMPLE_RATE;
+    const start = i * SEGMENT_SAMPLES;
+    const slice = pcm.subarray(start, Math.min(start + SEGMENT_SAMPLES, pcm.length));
 
     const base64 = bytesToBase64(pcm16kToWavBytes(slice));
 
@@ -120,22 +142,14 @@ export async function transcribeViaHf(
     const data = (await response.json()) as HfResponse;
     const text = (data.text ?? '').trim();
     if (text) {
-      fullText += (fullText ? ' ' : '') + text;
-      options.onPartialText?.(fullText);
+      texts.push(text);
+      options.onPartialText?.(joinTranscriptText(texts));
     }
-    for (const chunk of data.chunks ?? []) {
-      const [chunkStart, chunkEnd] = chunk.timestamp;
-      allChunks.push({
-        text: chunk.text,
-        timestamp: [
-          (chunkStart ?? 0) + offsetSeconds,
-          chunkEnd == null ? null : chunkEnd + offsetSeconds,
-        ],
-      });
-    }
+    allChunks.push(...offsetChunks(data.chunks ?? [], i * SEGMENT_SECONDS));
 
+    options.onCheckpoint?.({ segments: i + 1, text: joinTranscriptText(texts), chunks: [...allChunks] });
     options.onProgress?.(Math.round(((i + 1) / totalSegments) * 100));
   }
 
-  return { text: fullText, chunks: allChunks };
+  return { text: joinTranscriptText(texts), chunks: allChunks };
 }

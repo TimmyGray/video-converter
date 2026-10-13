@@ -41,3 +41,13 @@
 **Correct behavior:** Separate move and resize branches and use explicit handle matching sets (`e/ne/se`, `w/nw/sw`, etc.) for directional resize logic.
 **Pattern / trigger:** Pointer/drag code that uses string handles and branches on substring checks.
 **Generalize?:** Yes
+
+### 2026-10-13 — Local Whisper hung for hours in transformers.js' seek loop
+
+**Trigger:** User report (transcription stuck at 75% for hours, 4 CPU threads at 100%)
+**Context:** Local transcription in [src/workers/whisper.worker.ts](src/workers/whisper.worker.ts) with `return_timestamps: true` on `@huggingface/transformers` 4.2.0.
+**Wrong action:** Called the ASR pipeline with timestamps but without `max_new_tokens`, and with `language: undefined` for "Auto-detect".
+**Root cause:** transformers.js 4.x routes timestamped generation through `_generate_with_seek`, which advances only to the last timestamp pair; a pair at `<|0.00|>` advances by 0 and, with greedy decoding, regenerates the same window forever. Separately, with no language it silently forces `<|en|>`, so Russian speech came out as hallucinated English (which makes degenerate output likelier).
+**Correct behavior:** Always pass `max_new_tokens` (bypasses the seek loop, bounds every window), detect the language ourselves, and supervise the worker from the main thread with a heartbeat watchdog — a worker stuck in WASM cannot time itself out.
+**Pattern / trigger:** Any change to the Whisper pipeline options or a transformers.js upgrade — re-read `models/whisper/modeling_whisper.js` `generate` for loops and silent defaults.
+**Generalize?:** Yes

@@ -137,3 +137,16 @@ export function getOutputFileName(
 
   return `${nameWithoutExt}.${FORMAT_INFO[format].extension}`;
 }
+
+/** Formats seconds as M:SS (or H:MM:SS from one hour), with tenths when `withTenths` is set. */
+export function formatClock(seconds: number, withTenths = false): string {
+  const safe = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
+  const totalTenths = Math.round(safe * 10);
+  const whole = Math.floor(totalTenths / 10);
+  const hours = Math.floor(whole / 3600);
+  const minutes = Math.floor((whole % 3600) / 60);
+  const secs = whole % 60;
+  const pad = (value: number) => String(value).padStart(2, '0');
+  const base = hours > 0 ? `${hours}:${pad(minutes)}:${pad(secs)}` : `${minutes}:${pad(secs)}`;
+  return withTenths ? `${base}.${totalTenths % 10}` : base;
+}

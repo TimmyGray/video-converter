@@ -49,11 +49,14 @@ jest.mock('@/utils/hfToken', () => ({
 
 const mockTranscribeViaHf = jest.fn();
 const mockDescribeHfFailure = jest.fn(
-  (error: unknown) => `described: ${error instanceof Error ? error.message : String(error)}`
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  (error: unknown, _resumedAtSeconds?: number) =>
+    `described: ${error instanceof Error ? error.message : String(error)}`
 );
 jest.mock('@/utils/hfTranscribe', () => ({
   transcribeViaHf: (...args: unknown[]) => mockTranscribeViaHf(...args),
-  describeHfFailure: (error: unknown) => mockDescribeHfFailure(error),
+  describeHfFailure: (error: unknown, resumedAtSeconds?: number) =>
+    mockDescribeHfFailure(error, resumedAtSeconds),
 }));
 
 const mockPolishTranscript = jest.fn();
@@ -211,13 +214,15 @@ describe('useFileConverter', () => {
       await result.current.startConversion();
     });
 
-    expect(mockExtractPcmWav).toHaveBeenCalledWith(file, expect.any(Function));
+    expect(mockExtractPcmWav).toHaveBeenCalledWith(file, expect.any(Function), null);
     expect(mockTranscribe).toHaveBeenCalledWith(expect.any(Float32Array), {
       language: null,
       translate: false,
+      startSegment: 0,
       onModelProgress: expect.any(Function),
       onTranscribeProgress: expect.any(Function),
       onPartialText: expect.any(Function),
+      onSegmentSkipped: expect.any(Function),
     });
     expect(result.current.job.status).toBe('done');
     expect(result.current.job.transcriptText).toBe('hello world');
@@ -241,9 +246,11 @@ describe('useFileConverter', () => {
     expect(mockTranscribe).toHaveBeenCalledWith(expect.any(Float32Array), {
       language: 'spanish',
       translate: true,
+      startSegment: 0,
       onModelProgress: expect.any(Function),
       onTranscribeProgress: expect.any(Function),
       onPartialText: expect.any(Function),
+      onSegmentSkipped: expect.any(Function),
     });
   });
 
@@ -348,10 +355,75 @@ describe('useFileConverter', () => {
       await result.current.startConversion();
     });
 
-    expect(mockDescribeHfFailure).toHaveBeenCalledWith(expect.any(Error));
+    expect(mockDescribeHfFailure).toHaveBeenCalledWith(expect.any(Error), 0);
     expect(mockDescribeHfFailure.mock.invocationCallOrder[0]).toBeLessThan(
       mockTranscribe.mock.invocationCallOrder[0]
     );
+  });
+
+  it('keeps the hosted part and resumes locally after the last finished segment', async () => {
+    mockGetHfToken.mockReturnValue('hf_x');
+    mockTranscribeViaHf.mockImplementationOnce(
+      async (_pcm: Float32Array, options: { onCheckpoint: (checkpoint: unknown) => void }) => {
+        options.onCheckpoint({
+          segments: 2,
+          text: 'hosted part',
+          chunks: [{ text: 'hosted part', timestamp: [0, 1] }],
+        });
+        throw new Error('rate limited');
+      }
+    );
+    mockTranscribe.mockImplementationOnce(
+      async (_pcm: Float32Array, options: { onPartialText: (text: string) => void }) => {
+        options.onPartialText('local part');
+        return { text: 'local part', chunks: [{ text: 'local part', timestamp: [120, 121] }] };
+      }
+    );
+
+    const { result } = renderHook(() => useFileConverter());
+    const file = new File([''], 'lecture.mp4', { type: 'video/mp4' });
+    act(() => result.current.selectFile(file));
+    act(() => result.current.selectConversionMode('transcription'));
+
+    await act(async () => {
+      await result.current.startConversion();
+    });
+
+    expect(mockTranscribe).toHaveBeenCalledWith(
+      expect.any(Float32Array),
+      expect.objectContaining({ startSegment: 2, onModelProgress: undefined })
+    );
+    expect(mockDescribeHfFailure).toHaveBeenCalledWith(expect.any(Error), 120);
+    expect(result.current.job.transcriptText).toBe('hosted part local part');
+    expect(result.current.job.transcriptChunks).toEqual([
+      { text: 'hosted part', timestamp: [0, 1] },
+      { text: 'local part', timestamp: [120, 121] },
+    ]);
+    expect(result.current.job.status).toBe('done');
+  });
+
+  it('surfaces stretches the local engine skipped and clears the notice on reset', async () => {
+    mockTranscribe.mockImplementationOnce(
+      async (_pcm: Float32Array, options: { onSegmentSkipped: (segment: unknown) => void }) => {
+        options.onSegmentSkipped({ index: 1, startSeconds: 60, endSeconds: 120, reason: 'stalled' });
+        return { text: 'partial', chunks: [] };
+      }
+    );
+
+    const { result } = renderHook(() => useFileConverter());
+    const file = new File([''], 'lecture.mp4', { type: 'video/mp4' });
+    act(() => result.current.selectFile(file));
+    act(() => result.current.selectConversionMode('transcription'));
+
+    await act(async () => {
+      await result.current.startConversion();
+    });
+
+    expect(result.current.job.localTranscriptionNotice).toMatch(/skipped 1:00–2:00/);
+    expect(result.current.job.status).toBe('done');
+
+    act(() => result.current.reset());
+    expect(result.current.job.localTranscriptionNotice).toBeNull();
   });
 
   it('leaves the notice null when hosted transcription succeeds', async () => {
@@ -735,7 +807,8 @@ describe('useFileConverter', () => {
       'mp3',
       'audio-extraction',
       result.current.job.cropSettings,
-      expect.any(Function)
+      expect.any(Function),
+      null
     );
     expect(result.current.job.status).toBe('done');
     expect(result.current.job.outputFileName).toBe('output.mp3');
@@ -756,7 +829,8 @@ describe('useFileConverter', () => {
       'mp4',
       'video',
       result.current.job.cropSettings,
-      expect.any(Function)
+      expect.any(Function),
+      null
     );
   });
 
@@ -780,5 +854,78 @@ describe('useFileConverter', () => {
 
     expect(result.current.job.status).toBe('idle');
     expect(mockTranscode).not.toHaveBeenCalled();
+  });
+
+  describe('trim range', () => {
+    const range = { start: 2, end: 8 };
+
+    it('applyTrim sets and clears the cut region', () => {
+      const { result } = renderHook(() => useFileConverter());
+
+      act(() => result.current.applyTrim(range));
+      expect(result.current.job.trimRange).toEqual(range);
+
+      act(() => result.current.applyTrim(null));
+      expect(result.current.job.trimRange).toBeNull();
+    });
+
+    it('selectFile clears the cut of the previous file', () => {
+      const { result } = renderHook(() => useFileConverter());
+
+      act(() => result.current.applyTrim(range));
+      act(() => result.current.selectFile(new File([''], 'next.mp4', { type: 'video/mp4' })));
+
+      expect(result.current.job.trimRange).toBeNull();
+    });
+
+    it('passes the cut region to transcode', async () => {
+      const { result } = renderHook(() => useFileConverter());
+      const file = new File([''], 'test.mp4', { type: 'video/mp4' });
+
+      act(() => result.current.selectFile(file));
+      act(() => result.current.applyTrim(range));
+      await act(async () => {
+        await result.current.startConversion();
+      });
+
+      expect(mockTranscode).toHaveBeenLastCalledWith(
+        file,
+        'mp4',
+        'video',
+        result.current.job.cropSettings,
+        expect.any(Function),
+        range
+      );
+    });
+
+    it('passes the cut region to extractPcmWav for transcription', async () => {
+      const { result } = renderHook(() => useFileConverter());
+      const file = new File([''], 'test.mp4', { type: 'video/mp4' });
+
+      act(() => result.current.selectFile(file));
+      act(() => result.current.selectConversionMode('transcription'));
+      act(() => result.current.applyTrim(range));
+      await act(async () => {
+        await result.current.startConversion();
+      });
+
+      expect(mockExtractPcmWav).toHaveBeenLastCalledWith(file, expect.any(Function), range);
+    });
+
+    it('applyTrim after a finished run discards the stale output', async () => {
+      const { result } = renderHook(() => useFileConverter());
+      const file = new File([''], 'test.mp4', { type: 'video/mp4' });
+
+      act(() => result.current.selectFile(file));
+      await act(async () => {
+        await result.current.startConversion();
+      });
+      expect(result.current.job.status).toBe('done');
+
+      act(() => result.current.applyTrim(range));
+
+      expect(result.current.job.status).toBe('idle');
+      expect(result.current.job.outputUrl).toBeNull();
+    });
   });
 });

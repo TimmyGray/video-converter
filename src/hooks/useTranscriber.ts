@@ -1,126 +1,49 @@
 'use client';
 
 import { useCallback, useEffect, useRef } from 'react';
-import type { TranscriptChunk } from '@/types';
-import type { TranscribeRequest, WorkerOutbound } from '@/workers/whisper.worker';
+import {
+  createLocalTranscriptionSession,
+  type LocalTranscribeOptions,
+  type LocalTranscriptResult,
+  type LocalTranscriptionSession,
+} from '@/utils/localTranscriptionSession';
 
-export interface TranscribeOptions {
-  language: string | null;
-  translate: boolean;
-  onModelProgress?: (percent: number) => void;
-  onTranscribeProgress?: (percent: number) => void;
-  onPartialText?: (text: string) => void;
-}
-
-export interface TranscriptResult {
-  text: string;
-  chunks: TranscriptChunk[];
-}
+export type TranscribeOptions = LocalTranscribeOptions;
+export type TranscriptResult = LocalTranscriptResult;
+export type { SkippedSegment } from '@/utils/localTranscriptionSession';
 
 export interface UseTranscriberReturn {
   transcribe: (audio: Float32Array, options: TranscribeOptions) => Promise<TranscriptResult>;
   terminate: () => void;
 }
 
-export function useTranscriber(): UseTranscriberReturn {
-  const workerRef = useRef<Worker | null>(null);
-  const requestIdRef = useRef(0);
-  const cancelPendingRef = useRef<(() => void) | null>(null);
+function createWhisperWorker(): Worker {
+  return new Worker(new URL('../workers/whisper.worker.ts', import.meta.url), { type: 'module' });
+}
 
-  const getWorker = useCallback((): Worker => {
-    if (!workerRef.current) {
-      workerRef.current = new Worker(new URL('../workers/whisper.worker.ts', import.meta.url), {
-        type: 'module',
-      });
+export function useTranscriber(): UseTranscriberReturn {
+  const sessionRef = useRef<LocalTranscriptionSession | null>(null);
+
+  const getSession = useCallback((): LocalTranscriptionSession => {
+    if (!sessionRef.current) {
+      sessionRef.current = createLocalTranscriptionSession(createWhisperWorker);
     }
-    return workerRef.current;
+    return sessionRef.current;
   }, []);
 
   const transcribe = useCallback(
-    (audio: Float32Array, options: TranscribeOptions): Promise<TranscriptResult> => {
-      const worker = getWorker();
-      const id = ++requestIdRef.current;
-      const fileProgress = new Map<string, number>();
-
-      return new Promise<TranscriptResult>((resolve, reject) => {
-        const cleanup = () => {
-          worker.removeEventListener('message', handleMessage);
-          worker.removeEventListener('error', handleError);
-          cancelPendingRef.current = null;
-        };
-
-        cancelPendingRef.current = () => {
-          cleanup();
-          reject(new DOMException('Transcription was stopped.', 'AbortError'));
-        };
-
-        const handleMessage = (event: MessageEvent<WorkerOutbound>) => {
-          const message = event.data;
-          if (!message || message.id !== id) return;
-
-          switch (message.type) {
-            case 'model-progress': {
-              const { file, progress } = message.data;
-              if (options.onModelProgress && file && typeof progress === 'number') {
-                fileProgress.set(file, progress);
-                const values = [...fileProgress.values()];
-                const average = values.reduce((sum, value) => sum + value, 0) / values.length;
-                options.onModelProgress(Math.round(average));
-              }
-              break;
-            }
-            case 'transcribe-progress':
-              if (options.onTranscribeProgress) {
-                options.onTranscribeProgress(Math.round(message.progress * 100));
-              }
-              break;
-            case 'transcribe-partial':
-              options.onPartialText?.(message.text);
-              break;
-            case 'result':
-              cleanup();
-              resolve({ text: message.text, chunks: message.chunks });
-              break;
-            case 'error':
-              cleanup();
-              reject(new Error(message.message));
-              break;
-            default:
-              break;
-          }
-        };
-
-        const handleError = (event: ErrorEvent) => {
-          cleanup();
-          reject(new Error(event.message || 'Transcription worker failed to run.'));
-        };
-
-        worker.addEventListener('message', handleMessage);
-        worker.addEventListener('error', handleError);
-
-        const request: TranscribeRequest = {
-          type: 'transcribe',
-          id,
-          audio,
-          language: options.language,
-          translate: options.translate,
-        };
-        worker.postMessage(request);
-      });
-    },
-    [getWorker]
+    (audio: Float32Array, options: TranscribeOptions) => getSession().run(audio, options),
+    [getSession]
   );
 
   const terminate = useCallback(() => {
-    cancelPendingRef.current?.();
-    workerRef.current?.terminate();
-    workerRef.current = null;
+    sessionRef.current?.cancel();
   }, []);
 
   useEffect(() => {
     return () => {
-      workerRef.current?.terminate();
-      workerRef.current = null;
+      sessionRef.current?.dispose();
+      sessionRef.current = null;
     };
   }, []);
 
