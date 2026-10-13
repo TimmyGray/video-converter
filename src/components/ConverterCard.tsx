@@ -37,6 +37,7 @@ import FileDropZone from './FileDropZone';
 import FormatSelector from './FormatSelector';
 import CropSelector from './CropSelector';
 import CropPreviewPanel from './CropPreviewPanel';
+import TrimTimeline from './TrimTimeline';
 import ConversionProgress from './ConversionProgress';
 import FileInfoCard from './FileInfoCard';
 import SaveDestinationDialog from './SaveDestinationDialog';
@@ -72,6 +73,7 @@ export default function ConverterCard() {
     selectFormat,
     selectCropMode,
     updateCustomCrop,
+    applyTrim,
     selectTranscriptionLanguage,
     setTranscriptionTranslate,
     startConversion,
@@ -165,7 +167,7 @@ export default function ConverterCard() {
     <Box
       sx={{
         display: 'grid',
-        gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 1fr) 260px' },
+        gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 1fr) 340px' },
         gap: { xs: 2.5, lg: 3 },
         alignItems: 'start',
       }}
@@ -247,6 +249,7 @@ export default function ConverterCard() {
               status={job.status}
               errorMessage={job.errorMessage}
               cropSettings={job.cropSettings}
+              trimRange={job.trimRange}
               outputSizeBytes={job.outputSizeBytes}
               conversionDurationMs={job.conversionDurationMs}
               ffmpegMode={job.ffmpegMode}
@@ -552,14 +555,25 @@ export default function ConverterCard() {
         </CardContent>
       </Card>
 
-      {isVideoMode && (
-        <CropPreviewPanel
-          cropSettings={job.cropSettings}
-          file={job.file}
-          onCropModeChange={selectCropMode}
-          onCustomCropChange={updateCustomCrop}
-          disabled={isActive}
-        />
+      {(isVideoMode || job.file) && (
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: { xs: 2.5, lg: 3 }, minWidth: 0 }}>
+          {isVideoMode && (
+            <CropPreviewPanel
+              cropSettings={job.cropSettings}
+              file={job.file}
+              onCropModeChange={selectCropMode}
+              onCustomCropChange={updateCustomCrop}
+              disabled={isActive}
+            />
+          )}
+
+          <TrimTimeline
+            file={job.file}
+            appliedRange={job.trimRange}
+            onApply={applyTrim}
+            disabled={isActive}
+          />
+        </Box>
       )}
 
       <SaveDestinationDialog

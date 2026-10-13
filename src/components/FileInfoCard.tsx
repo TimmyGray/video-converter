@@ -4,7 +4,8 @@ import React from 'react';
 import { Box, Typography, Chip } from '@mui/material';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
-import { ConversionStatus, CropSettings } from '@/types';
+import { ConversionStatus, CropSettings, TrimRange } from '@/types';
+import { formatClock } from '@/utils/formatUtils';
 import { formatFileSize } from '@/utils/sizeUtils';
 
 interface FileInfoCardProps {
@@ -12,6 +13,7 @@ interface FileInfoCardProps {
   status: ConversionStatus;
   errorMessage: string | null;
   cropSettings: CropSettings;
+  trimRange?: TrimRange | null;
   outputSizeBytes?: number | null;
   conversionDurationMs?: number | null;
   ffmpegMode?: 'multithreaded' | 'single-threaded' | null;
@@ -61,6 +63,7 @@ export default function FileInfoCard({
   status,
   errorMessage,
   cropSettings,
+  trimRange,
   outputSizeBytes,
   conversionDurationMs,
   ffmpegMode,
@@ -135,6 +138,20 @@ export default function FileInfoCard({
             maxWidth: '100%',
           }}
         />
+        {trimRange && (
+          <Chip
+            label={`Cut: ${formatClock(trimRange.start, true)} – ${formatClock(trimRange.end, true)}`}
+            size="small"
+            data-testid="trim-chip"
+            sx={{
+              color: '#FFB74D',
+              border: '1px solid rgba(255,183,77,0.5)',
+              background: 'rgba(255,183,77,0.12)',
+              fontWeight: 600,
+              maxWidth: '100%',
+            }}
+          />
+        )}
       </Box>
 
       {hasFile && status === 'error' && (

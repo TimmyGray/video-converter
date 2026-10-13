@@ -7,6 +7,7 @@ import {
   CropMode,
   TranscriptChunk,
   TranscriptFormat,
+  TrimRange,
   VideoFormat,
 } from '@/types';
 import { useFFmpeg } from '@/hooks/useFFmpeg';
@@ -65,6 +66,7 @@ export interface UseFileConverterReturn {
   selectFormat: (format: VideoFormat) => void;
   selectCropMode: (mode: CropMode) => void;
   updateCustomCrop: (field: 'width' | 'height' | 'x' | 'y', value: string) => void;
+  applyTrim: (range: TrimRange | null) => void;
   selectTranscriptionLanguage: (language: string | null) => void;
   setTranscriptionTranslate: (translate: boolean) => void;
   startConversion: () => Promise<void>;
@@ -86,6 +88,7 @@ const initialJob: ConversionJob = {
       y: '0',
     },
   },
+  trimRange: null,
   status: 'idle',
   progress: 0,
   outputUrl: null,
@@ -219,6 +222,39 @@ export function useFileConverter(): UseFileConverterReturn {
     });
   }, []);
 
+  const applyTrim = useCallback((range: TrimRange | null) => {
+    setJob((prev) => {
+      const unchanged =
+        prev.trimRange === range ||
+        (prev.trimRange !== null &&
+          range !== null &&
+          prev.trimRange.start === range.start &&
+          prev.trimRange.end === range.end);
+      if (unchanged) return prev;
+
+      // A different region invalidates any prior output/transcript.
+      if (prev.outputUrl) URL.revokeObjectURL(prev.outputUrl);
+
+      return {
+        ...prev,
+        trimRange: range,
+        status:
+          prev.status === 'done' || prev.status === 'error' || prev.status === 'paused'
+            ? 'idle'
+            : prev.status,
+        progress: 0,
+        outputUrl: null,
+        outputFileName: null,
+        outputSizeBytes: null,
+        transcriptText: null,
+        transcriptChunks: null,
+        errorMessage: null,
+        hostedTranscriptionNotice: null,
+        polishNotice: null,
+      };
+    });
+  }, []);
+
   const selectTranscriptionLanguage = useCallback((language: string | null) => {
     setJob((prev) => ({ ...prev, transcriptionLanguage: language }));
   }, []);
@@ -300,8 +336,10 @@ export function useFileConverter(): UseFileConverterReturn {
         };
 
         // 1. Normalize to 16 kHz mono WAV via FFmpeg (0–15% of the transcription span).
-        const wavBlob = await extractPcmWav(job.file, (progress: number) =>
-          setProgress(progress * 0.15)
+        const wavBlob = await extractPcmWav(
+          job.file,
+          (progress: number) => setProgress(progress * 0.15),
+          job.trimRange
         );
         if (isStale()) return;
 
@@ -452,7 +490,8 @@ export function useFileConverter(): UseFileConverterReturn {
         job.outputFormat,
         job.conversionMode,
         job.cropSettings,
-        (progress: number) => setJob((prev) => ({ ...prev, progress }))
+        (progress: number) => setJob((prev) => ({ ...prev, progress })),
+        job.trimRange
       );
       const durationMs = Math.max(1, Math.round(performance.now() - conversionStart));
 
@@ -489,6 +528,7 @@ export function useFileConverter(): UseFileConverterReturn {
     job.outputFormat,
     job.conversionMode,
     job.cropSettings,
+    job.trimRange,
     job.transcriptionLanguage,
     job.transcriptionTranslate,
     isLoaded,
@@ -611,6 +651,7 @@ export function useFileConverter(): UseFileConverterReturn {
     selectFormat,
     selectCropMode,
     updateCustomCrop,
+    applyTrim,
     selectTranscriptionLanguage,
     setTranscriptionTranslate,
     startConversion,

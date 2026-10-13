@@ -9,6 +9,7 @@ const mockSelectFile = jest.fn();
 const mockSelectFormat = jest.fn();
 const mockSelectCropMode = jest.fn();
 const mockUpdateCustomCrop = jest.fn();
+const mockApplyTrim = jest.fn();
 const mockSelectConversionMode = jest.fn();
 const mockSelectTranscriptionLanguage = jest.fn();
 const mockSetTranscriptionTranslate = jest.fn();
@@ -52,6 +53,12 @@ jest.mock('@/components/CropPreviewPanel', () =>
   }
 );
 
+jest.mock('@/components/TrimTimeline', () =>
+  function TrimTimelineMock() {
+    return <div data-testid="trim-timeline-mock" />;
+  }
+);
+
 jest.mock('@/components/ConversionProgress', () =>
   function ConversionProgressMock() {
     return <div data-testid="conversion-progress-mock" />;
@@ -75,6 +82,7 @@ function createJob(overrides: Partial<ConversionJob> = {}): ConversionJob {
     file: null,
     conversionMode: 'video',
     outputFormat: 'mp4',
+    trimRange: null,
     cropSettings: {
       mode: 'none',
       custom: {
@@ -113,6 +121,7 @@ function mockConverterState(job: ConversionJob) {
     selectFormat: mockSelectFormat,
     selectCropMode: mockSelectCropMode,
     updateCustomCrop: mockUpdateCustomCrop,
+    applyTrim: mockApplyTrim,
     selectConversionMode: mockSelectConversionMode,
     selectTranscriptionLanguage: mockSelectTranscriptionLanguage,
     setTranscriptionTranslate: mockSetTranscriptionTranslate,

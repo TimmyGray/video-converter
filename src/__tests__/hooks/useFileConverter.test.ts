@@ -211,7 +211,7 @@ describe('useFileConverter', () => {
       await result.current.startConversion();
     });
 
-    expect(mockExtractPcmWav).toHaveBeenCalledWith(file, expect.any(Function));
+    expect(mockExtractPcmWav).toHaveBeenCalledWith(file, expect.any(Function), null);
     expect(mockTranscribe).toHaveBeenCalledWith(expect.any(Float32Array), {
       language: null,
       translate: false,
@@ -735,7 +735,8 @@ describe('useFileConverter', () => {
       'mp3',
       'audio-extraction',
       result.current.job.cropSettings,
-      expect.any(Function)
+      expect.any(Function),
+      null
     );
     expect(result.current.job.status).toBe('done');
     expect(result.current.job.outputFileName).toBe('output.mp3');
@@ -756,7 +757,8 @@ describe('useFileConverter', () => {
       'mp4',
       'video',
       result.current.job.cropSettings,
-      expect.any(Function)
+      expect.any(Function),
+      null
     );
   });
 
@@ -780,5 +782,78 @@ describe('useFileConverter', () => {
 
     expect(result.current.job.status).toBe('idle');
     expect(mockTranscode).not.toHaveBeenCalled();
+  });
+
+  describe('trim range', () => {
+    const range = { start: 2, end: 8 };
+
+    it('applyTrim sets and clears the cut region', () => {
+      const { result } = renderHook(() => useFileConverter());
+
+      act(() => result.current.applyTrim(range));
+      expect(result.current.job.trimRange).toEqual(range);
+
+      act(() => result.current.applyTrim(null));
+      expect(result.current.job.trimRange).toBeNull();
+    });
+
+    it('selectFile clears the cut of the previous file', () => {
+      const { result } = renderHook(() => useFileConverter());
+
+      act(() => result.current.applyTrim(range));
+      act(() => result.current.selectFile(new File([''], 'next.mp4', { type: 'video/mp4' })));
+
+      expect(result.current.job.trimRange).toBeNull();
+    });
+
+    it('passes the cut region to transcode', async () => {
+      const { result } = renderHook(() => useFileConverter());
+      const file = new File([''], 'test.mp4', { type: 'video/mp4' });
+
+      act(() => result.current.selectFile(file));
+      act(() => result.current.applyTrim(range));
+      await act(async () => {
+        await result.current.startConversion();
+      });
+
+      expect(mockTranscode).toHaveBeenLastCalledWith(
+        file,
+        'mp4',
+        'video',
+        result.current.job.cropSettings,
+        expect.any(Function),
+        range
+      );
+    });
+
+    it('passes the cut region to extractPcmWav for transcription', async () => {
+      const { result } = renderHook(() => useFileConverter());
+      const file = new File([''], 'test.mp4', { type: 'video/mp4' });
+
+      act(() => result.current.selectFile(file));
+      act(() => result.current.selectConversionMode('transcription'));
+      act(() => result.current.applyTrim(range));
+      await act(async () => {
+        await result.current.startConversion();
+      });
+
+      expect(mockExtractPcmWav).toHaveBeenLastCalledWith(file, expect.any(Function), range);
+    });
+
+    it('applyTrim after a finished run discards the stale output', async () => {
+      const { result } = renderHook(() => useFileConverter());
+      const file = new File([''], 'test.mp4', { type: 'video/mp4' });
+
+      act(() => result.current.selectFile(file));
+      await act(async () => {
+        await result.current.startConversion();
+      });
+      expect(result.current.job.status).toBe('done');
+
+      act(() => result.current.applyTrim(range));
+
+      expect(result.current.job.status).toBe('idle');
+      expect(result.current.job.outputUrl).toBeNull();
+    });
   });
 });
