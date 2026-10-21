@@ -16,6 +16,7 @@
     "prepare:ffmpeg-assets": "node scripts/prepare-ffmpeg-assets.mjs",
     "prepare:onnx-assets": "node scripts/prepare-onnx-assets.mjs",
     "lint": "eslint",
+    "watch:transcribe": "tsx service/main.ts",
     "test": "jest",
     "test:ci": "jest --ci"
   },
@@ -48,11 +49,13 @@
     "cross-env": "^7.0.3",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
+    "ffmpeg-static": "^5.3.0",
     "jest": "^30.3.0",
     "jest-environment-jsdom": "^30.3.0",
     "tailwindcss": "^4",
     "ts-jest": "^29.4.9",
     "ts-node": "^10.9.2",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   },
   "overrides": {

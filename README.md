@@ -49,6 +49,20 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
+## Folder watcher (unattended transcription)
+
+A terminal service that transcribes new videos from a folder into `.txt` files, one at a time.
+
+```bash
+cp .env.example .env   # set WATCH_DIR and OUTPUT_DIR (absolute paths, both required)
+npm run watch:transcribe
+```
+
+- Only videos larger than 5 MB and smaller than 1 GB are processed (`.mp4 .mkv .webm .mov .avi .m4v`, top level of the folder). A file is picked up once its size has stopped changing for 10 s.
+- Each file is processed once; the record lives in `OUTPUT_DIR/.videoforge-watch-state.json`. Failed and cancelled files are not retried; delete their entry (or re-save the file) to run them again.
+- Without `HF_TOKEN` everything runs on this machine (the first run downloads the Whisper model). With a token, audio slices are sent to Hugging Face and the transcript text is sent for cleanup; any failure falls back to the on-device model.
+- Hotkeys: `c` cancel the current file, `p` pause watching (the running file finishes), `s` start watching, `q` or Ctrl+C quit.
+
 ## Testing
 
 ```bash
