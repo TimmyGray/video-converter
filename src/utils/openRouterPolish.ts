@@ -47,6 +47,8 @@ export interface OpenRouterPolishOptions {
   retryOptions?: Omit<RetryOptions, 'fetchImpl'>;
   /** Injectable for tests; defaults to global fetch. */
   fetchImpl?: typeof fetch;
+  /** Candidate models in fallback order; defaults to OPENROUTER_POLISH_MODELS. */
+  models?: readonly string[];
 }
 
 interface ChatCompletionResponse {
@@ -125,8 +127,9 @@ export async function polishViaOpenRouter(
 ): Promise<string> {
   const doFetch = options.fetchImpl ?? fetch;
   const blocks = splitIntoBlocks(text);
+  const models = options.models?.length ? options.models : OPENROUTER_POLISH_MODELS;
 
-  /** Index into OPENROUTER_POLISH_MODELS; advances past candidates this account cannot reach. */
+  /** Index into the model ladder; advances past candidates this account cannot reach. */
   let modelIndex = 0;
   const polished: string[] = [];
 
@@ -148,10 +151,10 @@ export async function polishViaOpenRouter(
     // later block, so the dead ones are probed once per transcript, not once per block.
     let data: ChatCompletionResponse | null = null;
     let lastError: OpenRouterPolishError | null = null;
-    for (let m = modelIndex; m < OPENROUTER_POLISH_MODELS.length; m++) {
+    for (let m = modelIndex; m < models.length; m++) {
       try {
         data = await requestPolish(
-          OPENROUTER_POLISH_MODELS[m],
+          models[m],
           body,
           options.token,
           doFetch,
@@ -165,7 +168,7 @@ export async function polishViaOpenRouter(
         lastError = error instanceof OpenRouterPolishError ? error : new OpenRouterPolishError(String(error));
         if (!isModelUnavailable(lastError.status)) break;
         console.warn(
-          `[VideoConverter] OpenRouter polish model ${OPENROUTER_POLISH_MODELS[m]} unavailable; trying next:`,
+          `[VideoConverter] OpenRouter polish model ${models[m]} unavailable; trying next:`,
           lastError.message
         );
       }

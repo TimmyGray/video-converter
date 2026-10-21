@@ -74,6 +74,8 @@ export interface PolishOptions {
   retryOptions?: Omit<RetryOptions, 'fetchImpl'>;
   /** Injectable for tests; defaults to global fetch. */
   fetchImpl?: typeof fetch;
+  /** Candidate models in fallback order; defaults to POLISH_MODELS. */
+  models?: readonly string[];
 }
 
 interface ChatCompletionResponse {
@@ -246,8 +248,9 @@ async function requestPolish(
 export async function polishTranscript(text: string, options: PolishOptions): Promise<string> {
   const doFetch = options.fetchImpl ?? fetch;
   const blocks = splitIntoBlocks(text);
+  const models = options.models?.length ? options.models : POLISH_MODELS;
 
-  /** Index into POLISH_MODELS; advances past candidates this account cannot reach. */
+  /** Index into the model ladder; advances past candidates this account cannot reach. */
   let modelIndex = 0;
   const polished: string[] = [];
   for (let i = 0; i < blocks.length; i++) {
@@ -269,10 +272,10 @@ export async function polishTranscript(text: string, options: PolishOptions): Pr
     // later block, so the dead ones are probed once per transcript, not once per block.
     let data: ChatCompletionResponse | null = null;
     let lastError: HfPolishError | null = null;
-    for (let m = modelIndex; m < POLISH_MODELS.length; m++) {
+    for (let m = modelIndex; m < models.length; m++) {
       try {
         data = await requestPolish(
-          POLISH_MODELS[m],
+          models[m],
           body,
           options.token,
           doFetch,
@@ -286,7 +289,7 @@ export async function polishTranscript(text: string, options: PolishOptions): Pr
         lastError = error instanceof HfPolishError ? error : new HfPolishError(String(error));
         if (!isModelUnavailable(lastError.status)) break;
         console.warn(
-          `[VideoConverter] polish model ${POLISH_MODELS[m]} unavailable; trying next:`,
+          `[VideoConverter] polish model ${models[m]} unavailable; trying next:`,
           lastError.message
         );
       }

@@ -156,6 +156,51 @@ describe('createLocalTranscriptionSession', () => {
     expect(workers).toHaveLength(1);
   });
 
+  it('does not count a deliberate pause as a stall and re-arms the watchdog on resume', async () => {
+    const { session, workers } = setup();
+    const run = session.run(minutes(2), baseOptions);
+    workers[0].emit({ type: 'ready' });
+
+    session.pause();
+    await jest.advanceTimersByTimeAsync(STALL_MS * 10);
+    expect(workers[0].terminate).not.toHaveBeenCalled();
+
+    session.resume();
+    workers[0].emit({ type: 'segment', segment: 0, text: 'one', chunks: [] });
+    await jest.advanceTimersByTimeAsync(STALL_MS - 1);
+    expect(workers[0].terminate).not.toHaveBeenCalled();
+
+    workers[0].emit({ type: 'segment', segment: 1, text: 'two', chunks: [] });
+    workers[0].emit({ type: 'done' });
+    await expect(run).resolves.toEqual(expect.objectContaining({ text: 'one two', skippedSegments: [] }));
+  });
+
+  it('still detects a hang after resume', async () => {
+    const { session, workers } = setup();
+    const run = session.run(minutes(1), baseOptions);
+    workers[0].emit({ type: 'ready' });
+    session.pause();
+    session.resume();
+    await jest.advanceTimersByTimeAsync(STALL_MS);
+    expect(workers[0].terminate).toHaveBeenCalled();
+    const result = await run;
+    expect(result.skippedSegments).toEqual([expect.objectContaining({ index: 0, reason: 'stalled' })]);
+  });
+
+  it('ignores messages arriving while paused without arming the watchdog', async () => {
+    const { session, workers } = setup();
+    const run = session.run(minutes(1), baseOptions);
+    workers[0].emit({ type: 'ready' });
+    session.pause();
+    workers[0].emit({ type: 'heartbeat', segment: 0, fraction: 0.5 });
+    await jest.advanceTimersByTimeAsync(STALL_MS * 5);
+    expect(workers[0].terminate).not.toHaveBeenCalled();
+    session.resume();
+    workers[0].emit({ type: 'segment', segment: 0, text: 'x', chunks: [] });
+    workers[0].emit({ type: 'done' });
+    await run;
+  });
+
   it('drops to a single ONNX thread after consecutive stalls and gives up after too many', async () => {
     const { session, workers } = setup();
     const run = session.run(minutes(10), baseOptions);

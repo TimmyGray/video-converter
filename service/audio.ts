@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { getWavNormalizeCommand } from '@/hooks/ffmpegCommandPlanner';
 import { SAMPLE_RATE } from '@/utils/transcriptionSegments';
+import type { PauseGate } from './pauseGate';
+import { suspendProcess } from './processSignal';
 
 const CLOCK = String.raw`(\d+):(\d+):(\d+(?:\.\d+)?)`;
 const DURATION_PATTERN = new RegExp(`Duration:\\s*${CLOCK}`);
@@ -30,6 +32,7 @@ function abortError(): DOMException {
 
 interface ExtractOptions {
   signal?: AbortSignal;
+  gate?: PauseGate;
   onProgress?: (fraction: number) => void;
 }
 
@@ -54,6 +57,14 @@ function runFfmpeg(ffmpegPath: string, input: string, wavPath: string, options: 
     const onAbort = () => child.kill('SIGKILL');
     options.signal?.addEventListener('abort', onAbort, { once: true });
 
+    const applyPause = (paused: boolean) => suspendProcess(child, paused);
+    const stopWatchingGate = options.gate?.onChange(applyPause);
+    if (options.gate?.paused) applyPause(true);
+    const detach = () => {
+      options.signal?.removeEventListener('abort', onAbort);
+      stopWatchingGate?.();
+    };
+
     const handleLine = (line: string) => {
       const text = line.trim();
       if (!text) return;
@@ -72,12 +83,12 @@ function runFfmpeg(ffmpegPath: string, input: string, wavPath: string, options: 
     });
 
     child.on('error', (err) => {
-      options.signal?.removeEventListener('abort', onAbort);
+      detach();
       reject(new Error(`Could not start ffmpeg (${ffmpegPath}): ${err.message}`));
     });
 
     child.on('close', (code) => {
-      options.signal?.removeEventListener('abort', onAbort);
+      detach();
       handleLine(buffered);
       if (options.signal?.aborted) reject(abortError());
       else if (code === 0) resolve();
@@ -146,6 +157,7 @@ export async function parseWavToPcm16k(file: string): Promise<Float32Array> {
 }
 
 export async function extractPcm(ffmpegPath: string, input: string, options: ExtractOptions = {}): Promise<Float32Array> {
+  await options.gate?.waitIfPaused(options.signal);
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'videoforge-watch-'));
   try {
     const wavPath = path.join(tempDir, 'audio.wav');

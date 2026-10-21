@@ -7,7 +7,7 @@ import { transcribeViaHf } from '@/utils/hfTranscribe';
 import { polishViaOpenRouter } from '@/utils/openRouterPolish';
 import { serializeTranscript } from '@/utils/subtitleUtils';
 import { extractPcm } from './audio';
-import { LEDGER_FILE_NAME, STABLE_MS, loadConfig } from './config';
+import { LEDGER_FILE_NAME, STABLE_MS, loadConfig, type ServiceConfig } from './config';
 import { createController } from './controller';
 import { renderFrame, renderLogLine, type DashboardInfo } from './dashboard';
 import { createNodeWhisperSession } from './localEngine';
@@ -16,6 +16,7 @@ import { pickOutputPath, removeStalePartials, writeTextAtomically } from './outp
 import { transcribeVideo } from './pipeline';
 import { createResourceSampler } from './resources';
 import { createStabilityTracker, listVideos } from './scanner';
+import { acquireInstanceLock, describeRunningInstance } from './singleInstance';
 
 function fail(lines: string[]): never {
   console.error(['VideoForge Watch cannot start:', ...lines.map((line) => `  - ${line}`)].join('\n'));
@@ -30,10 +31,17 @@ function loadDotEnv() {
   }
 }
 
-function describeEngine(hfToken: string, openRouterToken: string): string {
-  const transcription = hfToken ? 'hosted Hugging Face, on-device fallback' : 'on-device only (no HF_TOKEN)';
-  const polish = [hfToken && 'Hugging Face', openRouterToken && 'OpenRouter'].filter(Boolean).join(' + ');
-  return `${transcription} | polish: ${polish || 'off'}`;
+function describePolish(provider: string, models: string[]): string {
+  return `${provider} (${models.length > 0 ? models.join(', ') : 'default models'})`;
+}
+
+function describeEngine(config: ServiceConfig): string {
+  const transcription = config.hfToken ? 'hosted Hugging Face, on-device fallback' : 'on-device only (no HF_TOKEN)';
+  const polish = [
+    config.hfToken && describePolish('Hugging Face', config.hfPolishModels),
+    config.openRouterToken && describePolish('OpenRouter', config.openRouterPolishModels),
+  ].filter(Boolean);
+  return `${transcription} | polish: ${polish.join(' + ') || 'off'}`;
 }
 
 async function main() {
@@ -42,6 +50,24 @@ async function main() {
   const loaded = loadConfig(process.env);
   if (!loaded.ok) fail(loaded.errors);
   const { config } = loaded;
+
+  const lock = await acquireInstanceLock(config.instancePort, {
+    app: 'videoforge-watch',
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+    watchDir: config.watchDir,
+    outputDir: config.outputDir,
+  });
+  if (!lock.ok) {
+    if (lock.reason === 'running') {
+      console.error(describeRunningInstance(lock.info).join('\n'));
+      process.exit(1);
+    }
+    if (lock.reason === 'port-busy') {
+      fail([`Port ${lock.port} is used by another program, so the single-instance check cannot work. Set INSTANCE_PORT in .env to a free port.`]);
+    }
+    fail([`Cannot take the single-instance lock: ${lock.error.message}`]);
+  }
 
   const ffmpegPath = config.ffmpegPath ?? ffmpegStatic;
   if (!ffmpegPath || !fs.existsSync(ffmpegPath)) {
@@ -72,6 +98,8 @@ async function main() {
         {
           hfToken: config.hfToken,
           openRouterToken: config.openRouterToken,
+          hfPolishModels: config.hfPolishModels,
+          openRouterPolishModels: config.openRouterPolishModels,
           extractPcm: (input, options) => extractPcm(ffmpegPath, input, options),
           transcribeHosted: transcribeViaHf,
           localSession: session,
@@ -90,7 +118,7 @@ async function main() {
   const info: DashboardInfo = {
     watchDir: config.watchDir,
     outputDir: config.outputDir,
-    engine: describeEngine(config.hfToken, config.openRouterToken),
+    engine: describeEngine(config),
   };
 
   const interactive = Boolean(process.stdout.isTTY && process.stdin.isTTY);
@@ -142,7 +170,8 @@ async function main() {
   process.on('SIGTERM', quit);
   process.stdin.on('keypress', (_text: string, key: { name?: string; ctrl?: boolean }) => {
     if (key.ctrl && key.name === 'c') return quit();
-    if (key.name === 'c') controller.cancelCurrent();
+    if (key.name === 'space') controller.toggleProcessing();
+    else if (key.name === 'c') controller.cancelCurrent();
     else if (key.name === 'p') controller.pause();
     else if (key.name === 's') controller.start();
     else if (key.name === 'q') quit();
@@ -153,6 +182,7 @@ async function main() {
 
   clearInterval(ticker);
   session.dispose();
+  await lock.release();
   draw();
   if (interactive) {
     process.stdin.setRawMode(false);

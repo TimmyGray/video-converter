@@ -6,6 +6,7 @@ import { describeSkippedSegments } from '@/utils/localTranscriptionSession';
 import { polishViaOpenRouter } from '@/utils/openRouterPolish';
 import { formatClock } from '@/utils/formatUtils';
 import { SEGMENT_SECONDS, joinTranscriptText } from '@/utils/transcriptionSegments';
+import type { PauseGate } from './pauseGate';
 
 export type Stage = 'extracting' | 'transcribing-hosted' | 'loading-model' | 'transcribing-local' | 'polishing';
 export type LogLevel = 'info' | 'warn';
@@ -13,15 +14,23 @@ export type LogLevel = 'info' | 'warn';
 export interface PipelineDeps {
   hfToken: string;
   openRouterToken: string;
-  extractPcm: (input: string, options: { signal?: AbortSignal; onProgress?: (fraction: number) => void }) => Promise<Float32Array>;
+  /** Empty = the built-in ladders. */
+  hfPolishModels?: string[];
+  openRouterPolishModels?: string[];
+  fetchImpl?: typeof fetch;
+  extractPcm: (
+    input: string,
+    options: { signal?: AbortSignal; gate?: PauseGate; onProgress?: (fraction: number) => void }
+  ) => Promise<Float32Array>;
   transcribeHosted: typeof transcribeViaHf;
-  localSession: Pick<LocalTranscriptionSession, 'run' | 'cancel'>;
+  localSession: Pick<LocalTranscriptionSession, 'run' | 'cancel'> & { setPaused?: (paused: boolean) => void };
   polishHf: typeof polishTranscript;
   polishOpenRouter: typeof polishViaOpenRouter;
 }
 
 export interface PipelineCallbacks {
   signal: AbortSignal;
+  gate: PauseGate;
   onStage: (stage: Stage) => void;
   onProgress: (percent: number) => void;
   onLog: (level: LogLevel, message: string) => void;
@@ -42,7 +51,7 @@ function describeHostedFailure(error: unknown, resumedAtSeconds: number): string
 export async function transcribeVideo(
   file: string,
   deps: PipelineDeps,
-  { signal, onStage, onProgress, onLog }: PipelineCallbacks
+  { signal, gate, onStage, onProgress, onLog }: PipelineCallbacks
 ): Promise<TranscriptResult> {
   const { hfToken, openRouterToken } = deps;
   const willPolish = Boolean(hfToken || openRouterToken);
@@ -50,12 +59,20 @@ export async function transcribeVideo(
 
   const cancelLocal = () => deps.localSession.cancel();
   signal.addEventListener('abort', cancelLocal, { once: true });
+  const stopWatchingGate = gate.onChange((paused) => deps.localSession.setPaused?.(paused));
+
+  // Network steps pause between requests: the one in flight finishes, the next waits for resume.
+  const gatedFetch: typeof fetch = async (input, init) => {
+    await gate.waitIfPaused(signal);
+    return (deps.fetchImpl ?? fetch)(input, init);
+  };
 
   try {
     onStage('extracting');
     setProgress(0);
     const pcm = await deps.extractPcm(file, {
       signal,
+      gate,
       onProgress: (fraction) => setProgress(fraction * 15),
     });
     setProgress(15);
@@ -63,6 +80,7 @@ export async function transcribeVideo(
 
     const skippedSegments: SkippedSegment[] = [];
     const runLocal = async (resume: HfTranscribeCheckpoint | null): Promise<TranscriptResult> => {
+      await gate.waitIfPaused(signal);
       const prefixText = resume?.text ?? '';
       let stage: Stage | null = null;
       const enter = (next: Stage) => {
@@ -108,6 +126,7 @@ export async function transcribeVideo(
             hosted.checkpoint = checkpoint;
           },
           signal,
+          fetchImpl: gatedFetch,
         });
       } catch (hostedError) {
         if (signal.aborted) throw hostedError;
@@ -132,24 +151,45 @@ export async function transcribeVideo(
       let text: string;
       if (hfToken) {
         try {
-          text = await deps.polishHf(result.text, { token: hfToken, onProgress: onPolishProgress, signal });
+          text = await deps.polishHf(result.text, {
+            token: hfToken,
+            onProgress: onPolishProgress,
+            signal,
+            fetchImpl: gatedFetch,
+            models: deps.hfPolishModels,
+          });
         } catch (hfPolishError) {
           if (signal.aborted || !openRouterToken) throw hfPolishError;
           onLog('warn', 'Hugging Face AI cleanup failed - retrying with OpenRouter');
-          text = await deps.polishOpenRouter(result.text, { token: openRouterToken, onProgress: onPolishProgress, signal });
+          text = await deps.polishOpenRouter(result.text, {
+            token: openRouterToken,
+            onProgress: onPolishProgress,
+            signal,
+            fetchImpl: gatedFetch,
+            models: deps.openRouterPolishModels,
+          });
         }
       } else {
-        text = await deps.polishOpenRouter(result.text, { token: openRouterToken, onProgress: onPolishProgress, signal });
+        text = await deps.polishOpenRouter(result.text, {
+          token: openRouterToken,
+          onProgress: onPolishProgress,
+          signal,
+          fetchImpl: gatedFetch,
+          models: deps.openRouterPolishModels,
+        });
       }
       return { text, chunks: result.chunks };
     } catch (polishError) {
       if (signal.aborted) throw polishError;
       const provider = hfToken && !openRouterToken ? 'huggingface' : 'openrouter';
       const prefix = hfToken && openRouterToken ? 'Hugging Face and OpenRouter cleanup failed. ' : '';
-      onLog('warn', `${prefix}${describePolishFailure(polishError, provider)}`);
+      const detail = polishError instanceof Error ? polishError.message.replace(/\s+/g, ' ').trim().slice(0, 300) : '';
+      onLog('warn', `${prefix}${describePolishFailure(polishError, provider)}${detail ? ` Details: ${detail}` : ''}`);
       return result;
     }
   } finally {
     signal.removeEventListener('abort', cancelLocal);
+    stopWatchingGate();
+    deps.localSession.setPaused?.(false);
   }
 }

@@ -1,4 +1,5 @@
 import { POLL_INTERVAL_MS } from './config';
+import { createPauseGate, type PauseGate } from './pauseGate';
 import type { FileIdentity, Ledger, LedgerEntry } from './ledger';
 import type { Stage } from './pipeline';
 import { classifyScan, type StabilityTracker } from './scanner';
@@ -20,10 +21,15 @@ export interface CurrentJob {
   stage: Stage;
   percent: number;
   startedAt: number;
+  paused: boolean;
+  /** Total time spent paused, excluding the current pause. */
+  pausedMs: number;
+  pausedSince: number | null;
 }
 
 export interface Snapshot {
   state: ControllerState;
+  watching: boolean;
   current: CurrentJob | null;
   counts: { waiting: number; ignored: number; done: number; failed: number; cancelled: number };
   log: LogLine[];
@@ -59,6 +65,7 @@ export function createController(deps: ControllerDeps) {
   let stopping = false;
   let current: CurrentJob | null = null;
   let abort: AbortController | null = null;
+  let gate: PauseGate | null = null;
   let cancelRequested = false;
   let wake: (() => void) | null = null;
   let waiting = 0;
@@ -74,6 +81,7 @@ export function createController(deps: ControllerDeps) {
 
   const snapshot = (): Snapshot => ({
     state: stopping ? 'stopping' : current ? 'processing' : watchEnabled ? 'watching' : 'paused',
+    watching: watchEnabled,
     current: current ? { ...current } : null,
     counts: { waiting, ignored, ...deps.ledger.counts() },
     log: [...log],
@@ -104,14 +112,26 @@ export function createController(deps: ControllerDeps) {
     const startedAt = deps.now();
     const job = new AbortController();
     abort = job;
+    gate = createPauseGate();
     cancelRequested = false;
-    current = { name, path: file.path, size: file.size, stage: 'extracting', percent: 0, startedAt };
+    current = {
+      name,
+      path: file.path,
+      size: file.size,
+      stage: 'extracting',
+      percent: 0,
+      startedAt,
+      paused: false,
+      pausedMs: 0,
+      pausedSince: null,
+    };
     addLog('info', `Started ${name}`);
 
     const base = { path: file.path, size: file.size, mtimeMs: file.mtimeMs };
     try {
       const result = await deps.transcribe(file.path, {
         signal: job.signal,
+        gate,
         onStage: (stage) => {
           if (current) current.stage = stage;
           emit();
@@ -147,6 +167,7 @@ export function createController(deps: ControllerDeps) {
     } finally {
       current = null;
       abort = null;
+      gate = null;
     }
   };
 
@@ -185,7 +206,7 @@ export function createController(deps: ControllerDeps) {
     }
   };
 
-  return {
+  const controller = {
     run,
     snapshot,
     subscribe: (listener: () => void) => {
@@ -196,6 +217,21 @@ export function createController(deps: ControllerDeps) {
       if (!abort) return;
       cancelRequested = true;
       abort.abort();
+    },
+    pauseProcessing: () => {
+      if (!current || !gate || current.paused) return;
+      gate.pause();
+      current.paused = true;
+      current.pausedSince = deps.now();
+      addLog('info', `Paused ${current.name}`);
+    },
+    resumeProcessing: () => {
+      if (!current || !gate || !current.paused) return;
+      current.pausedMs += deps.now() - (current.pausedSince ?? deps.now());
+      current.paused = false;
+      current.pausedSince = null;
+      gate.resume();
+      addLog('info', `Resumed ${current.name}`);
     },
     pause: () => {
       if (!watchEnabled) return;
@@ -214,7 +250,12 @@ export function createController(deps: ControllerDeps) {
       wake?.();
       emit();
     },
+    toggleProcessing: () => {
+      if (current?.paused) controller.resumeProcessing();
+      else controller.pauseProcessing();
+    },
   };
+  return controller;
 }
 
 export type Controller = ReturnType<typeof createController>;

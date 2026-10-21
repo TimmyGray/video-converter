@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import ffmpegStatic from 'ffmpeg-static';
+import { createPauseGate } from '../../../service/pauseGate';
 import {
   extractPcm,
   parseDurationSeconds,
@@ -128,6 +129,36 @@ const ffmpeg = ffmpegStatic && fs.existsSync(ffmpegStatic) ? ffmpegStatic : null
   it('stops when the signal is already aborted', async () => {
     const input = make('tone2.mkv', ['-f', 'lavfi', '-i', 'sine=frequency=440:duration=1']);
     await expect(extractPcm(ffmpeg!, input, { signal: AbortSignal.abort() })).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('waits for resume before starting when the gate is paused', async () => {
+    const input = make('tone3.mkv', ['-f', 'lavfi', '-i', 'sine=frequency=440:duration=1']);
+    const gate = createPauseGate();
+    gate.pause();
+    let finished = false;
+    const extraction = extractPcm(ffmpeg!, input, { gate }).then((pcm) => {
+      finished = true;
+      return pcm;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(finished).toBe(false);
+    gate.resume();
+    expect((await extraction).length).toBeGreaterThan(0);
+  });
+
+  it('freezes a running ffmpeg while the gate is paused and finishes after resume', async () => {
+    const input = make('long.mkv', ['-f', 'lavfi', '-i', 'sine=frequency=440:duration=600', '-c:a', 'flac']);
+    const gate = createPauseGate();
+    const progress: number[] = [];
+    const extraction = extractPcm(ffmpeg!, input, { gate, onProgress: (fraction) => progress.push(fraction) });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    gate.pause();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const frozenAt = progress.length;
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(progress.length).toBe(frozenAt);
+    gate.resume();
+    expect((await extraction).length).toBeGreaterThan(16000 * 500);
   });
 
   it('reports a missing binary', async () => {

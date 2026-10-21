@@ -37,6 +37,22 @@ describe('polishViaOpenRouter', () => {
     expect(body.messages[1]).toEqual({ role: 'user', content: 'raw text.' });
   });
 
+  it('uses the caller-supplied models in order instead of the built-in ladder', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce(errorResponse(503))
+      .mockResolvedValueOnce(chatResponse('Polished text here.'));
+
+    await polishViaOpenRouter('polished text here', {
+      token: 'sk-or-v1_x',
+      fetchImpl,
+      models: ['vendor/one:free', 'vendor/two:free'],
+    });
+
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body).model).toBe('vendor/one:free');
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body).model).toBe('vendor/two:free');
+  });
+
   it('keeps the raw block when the completion is truncated', async () => {
     const raw = 'a transcript block whose cleaned form is cut short by the model';
     const fetchImpl = jest.fn().mockResolvedValue(chatResponse('a transcript block whose', 'length'));

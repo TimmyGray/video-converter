@@ -64,8 +64,9 @@ export function renderFrame(
   now: number,
   width: number
 ): string[] {
-  const { state, current, counts, log } = snapshot;
-  const stateText = state === 'paused' && current ? 'PAUSED (finishing current file)' : STATE_LABEL[state];
+  const { state, watching, current, counts, log } = snapshot;
+  const flags = [current?.paused && 'file paused', current && !watching && 'watching paused'].filter(Boolean);
+  const stateText = [STATE_LABEL[state], ...flags].join(' | ');
 
   const lines = [
     `VideoForge Watch  [${stateText}]`,
@@ -77,10 +78,12 @@ export function renderFrame(
   ];
 
   if (current) {
+    const pausedNow = current.pausedSince != null ? now - current.pausedSince : 0;
+    const elapsed = now - current.startedAt - current.pausedMs - pausedNow;
     lines.push(
       `Now   : ${current.name} (${formatBytes(current.size)})`,
-      `Stage : ${STAGE_LABEL[current.stage]}`,
-      `${progressBar(current.percent)}   elapsed ${formatElapsed(now - current.startedAt)}`
+      `Stage : ${current.paused ? 'PAUSED - ' : ''}${STAGE_LABEL[current.stage]}`,
+      `${progressBar(current.percent)}   elapsed ${formatElapsed(elapsed)}`
     );
   } else {
     lines.push('Now   : idle', '', '');
@@ -101,7 +104,7 @@ export function renderFrame(
     const entry = recent[i];
     lines.push(entry ? `${clock(entry.at)} ${KIND_LABEL[entry.kind]} ${entry.message}` : '');
   }
-  lines.push('', '[c] cancel file  [p] pause watching  [s] start watching  [q] quit');
+  lines.push('', '[space] pause/resume file  [c] cancel file  [p] pause watching  [s] start watching  [q] quit');
 
   return lines.map((line) => fit(line, width));
 }

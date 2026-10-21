@@ -178,6 +178,28 @@ describe('model fallback ladder', () => {
     for (const model of POLISH_MODELS) expect(model).not.toMatch(/coder/i);
   });
 
+  it('uses the caller-supplied models in order instead of the built-in ladder', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce(errorResponse(503))
+      .mockResolvedValueOnce(chatResponse('Polished text here.'));
+
+    await polishTranscript('polished text here', {
+      token: 'hf_x',
+      fetchImpl,
+      models: ['org/first:provider', 'org/second:provider'],
+    });
+
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body).model).toBe('org/first:provider');
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body).model).toBe('org/second:provider');
+  });
+
+  it('falls back to the built-in ladder when the supplied list is empty', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(chatResponse('Polished.'));
+    await polishTranscript('raw text.', { token: 'hf_x', fetchImpl, models: [] });
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body).model).toBe(POLISH_MODELS[0]);
+  });
+
   it('advances to the next model on a 503', async () => {
     const fetchImpl = jest
       .fn()

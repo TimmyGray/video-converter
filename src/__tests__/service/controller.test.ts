@@ -195,6 +195,77 @@ describe('controller', () => {
     await running;
   });
 
+  it('pauses and resumes the current file through its gate and keeps the pause out of elapsed time', async () => {
+    let clock = 1_000;
+    const { ledger } = memoryLedger();
+    const jobs: Job[] = [];
+    const controller = createController({
+      ledger,
+      tracker: { stable: (list) => list },
+      listVideos: async () => [file('a.mp4', 1)],
+      transcribe: (path, callbacks) =>
+        new Promise<TranscriptResult>((resolve, reject) => {
+          jobs.push({ file: path, callbacks, resolve, reject });
+          callbacks.signal.addEventListener('abort', () => reject(new DOMException('stopped', 'AbortError')));
+        }),
+      saveTranscript: async () => '/out/a.txt',
+      now: () => clock,
+      pollIntervalMs: 5,
+    });
+    const running = controller.run();
+    await until(() => jobs.length === 1);
+    const { gate } = jobs[0].callbacks;
+    expect(gate.paused).toBe(false);
+
+    controller.toggleProcessing();
+    expect(gate.paused).toBe(true);
+    expect(controller.snapshot().current).toMatchObject({ paused: true, pausedSince: 1_000 });
+
+    clock = 61_000;
+    controller.toggleProcessing();
+    expect(gate.paused).toBe(false);
+    expect(controller.snapshot().current).toMatchObject({ paused: false, pausedMs: 60_000, pausedSince: null });
+
+    controller.quit();
+    await running;
+  });
+
+  it('ignores pause and resume when nothing is processing', async () => {
+    const t = setup([]);
+    const running = t.controller.run();
+    t.controller.pauseProcessing();
+    t.controller.resumeProcessing();
+    t.controller.toggleProcessing();
+    expect(t.controller.snapshot().current).toBeNull();
+    t.controller.quit();
+    await running;
+  });
+
+  it('cancels a paused file and releases whoever waits on its gate', async () => {
+    const t = setup([file('a.mp4', 1)]);
+    const running = t.controller.run();
+    await until(() => t.jobs.length === 1);
+    const { gate, signal } = t.jobs[0].callbacks;
+    t.controller.pauseProcessing();
+    const waiting = gate.waitIfPaused(signal);
+    t.controller.cancelCurrent();
+    await expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
+    await until(() => t.entries.length === 1);
+    expect(t.entries[0].status).toBe('cancelled');
+    t.controller.quit();
+    await running;
+  });
+
+  it('reports watching as paused while a file is still running', async () => {
+    const t = setup([file('a.mp4', 1)]);
+    const running = t.controller.run();
+    await until(() => t.jobs.length === 1);
+    t.controller.pause();
+    expect(t.controller.snapshot()).toMatchObject({ state: 'processing', watching: false });
+    t.controller.quit();
+    await running;
+  });
+
   it('logs an out-of-range file once', async () => {
     const t = setup([{ path: '/in/tiny.mp4', size: 3 * MIB, mtimeMs: 1 }]);
     const running = t.controller.run();

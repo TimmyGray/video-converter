@@ -62,6 +62,9 @@ export interface LocalTranscriptionSession {
   run: (audio: Float32Array, options: LocalTranscribeOptions) => Promise<LocalTranscriptResult>;
   /** Stops the in-flight run (it rejects with an AbortError) and kills the worker. */
   cancel: () => void;
+  /** Suspends the stall watchdog while the host has frozen the worker on purpose. */
+  pause: () => void;
+  resume: () => void;
   dispose: () => void;
 }
 
@@ -83,6 +86,8 @@ export function createLocalTranscriptionSession(
   let workerThreads: number | null = null;
   let requestId = 0;
   let cancelPending: (() => void) | null = null;
+  let paused = false;
+  let watchdog: { arm: () => void; disarm: () => void } | null = null;
 
   const killWorker = () => {
     worker?.terminate();
@@ -135,10 +140,12 @@ export function createLocalTranscriptionSession(
           activeWorker.removeEventListener('message', handleMessage);
           activeWorker.removeEventListener('error', handleError);
           cancelPending = null;
+          watchdog = null;
         };
 
         const arm = () => {
           clearTimeout(timer);
+          if (paused) return;
           timer = setTimeout(
             () => {
               cleanup();
@@ -217,6 +224,7 @@ export function createLocalTranscriptionSession(
 
         activeWorker.addEventListener('message', handleMessage);
         activeWorker.addEventListener('error', handleError);
+        watchdog = { arm, disarm: () => clearTimeout(timer) };
         arm();
 
         // Send only the remainder, as a transferred copy: a structured clone of a subarray would
@@ -266,11 +274,22 @@ export function createLocalTranscriptionSession(
   };
 
   const cancel = () => {
+    paused = false;
     cancelPending?.();
     killWorker();
   };
 
-  return { run, cancel, dispose: cancel };
+  const pause = () => {
+    paused = true;
+    watchdog?.disarm();
+  };
+
+  const resume = () => {
+    paused = false;
+    watchdog?.arm();
+  };
+
+  return { run, cancel, pause, resume, dispose: cancel };
 }
 
 /**

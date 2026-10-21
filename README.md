@@ -61,7 +61,10 @@ npm run watch:transcribe
 - Only videos larger than 5 MB and smaller than 1 GB are processed (`.mp4 .mkv .webm .mov .avi .m4v`, top level of the folder). A file is picked up once its size has stopped changing for 10 s.
 - Each file is processed once; the record lives in `OUTPUT_DIR/.videoforge-watch-state.json`. Failed and cancelled files are not retried; delete their entry (or re-save the file) to run them again.
 - Without `HF_TOKEN` everything runs on this machine (the first run downloads the Whisper model). With a token, audio slices are sent to Hugging Face and the transcript text is sent for cleanup; any failure falls back to the on-device model.
-- Hotkeys: `c` cancel the current file, `p` pause watching (the running file finishes), `s` start watching, `q` or Ctrl+C quit.
+- Only one copy can run at a time. A second start prints the PID, start time and folders of the running one and exits with code 1. The lock is a loopback port (`INSTANCE_PORT`, default 47631) that the system releases when the process dies, so a crash never leaves it stuck. Set `INSTANCE_PORT` if another program uses that port.
+- Hotkeys: `space` pause/resume the file being processed, `c` cancel it, `p` pause watching (the running file finishes), `s` start watching, `q` or Ctrl+C quit.
+- Pausing a file freezes ffmpeg and the on-device engine at once (Linux and macOS; on Windows only the network steps pause) and holds the next hosted or cleanup request; a request already in flight finishes first. Time spent paused is not counted in the elapsed clock.
+- `HF_POLISH_MODELS` and `OPENROUTER_POLISH_MODELS` in `.env` replace the models used for the AI cleanup (comma separated, tried in order, `org/model[:provider]`). Leave them empty for the built-in lists; the dashboard's Engine line shows what is in use.
 
 ## Testing
 

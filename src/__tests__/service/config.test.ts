@@ -72,7 +72,65 @@ describe('loadConfig', () => {
     });
     expect(result).toEqual({
       ok: true,
-      config: { watchDir: watch, outputDir: output, hfToken: 'hf_x', openRouterToken: '', ffmpegPath: null },
+      config: {
+        watchDir: watch,
+        outputDir: output,
+        hfToken: 'hf_x',
+        openRouterToken: '',
+        hfPolishModels: [],
+        openRouterPolishModels: [],
+        ffmpegPath: null,
+        instancePort: 47631,
+      },
+    });
+  });
+
+  describe('instance port', () => {
+    const base = () => ({ WATCH_DIR: makeDir(), OUTPUT_DIR: makeDir() });
+
+    it('accepts a port from 1024 to 65535', () => {
+      const result = loadConfig({ ...base(), INSTANCE_PORT: ' 50000 ' });
+      expect(result.ok && result.config.instancePort).toBe(50000);
+    });
+
+    it.each(['80', '1023', '65536', 'abc', '4.5', '-1'])('rejects %s', (value) => {
+      const result = loadConfig({ ...base(), INSTANCE_PORT: value });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.errors[0]).toContain('INSTANCE_PORT');
+    });
+  });
+
+  describe('polish models', () => {
+    const base = () => ({ WATCH_DIR: makeDir(), OUTPUT_DIR: makeDir() });
+
+    it('reads comma or whitespace separated model lists in order and drops duplicates', () => {
+      const result = loadConfig({
+        ...base(),
+        HF_POLISH_MODELS: ' swiss-ai/Apertus-8B-Instruct-2509:publicai, org/other:provider\n org/other:provider ',
+        OPENROUTER_POLISH_MODELS: 'google/gemma-4-26b-a4b-it:free',
+      });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.config.hfPolishModels).toEqual(['swiss-ai/Apertus-8B-Instruct-2509:publicai', 'org/other:provider']);
+        expect(result.config.openRouterPolishModels).toEqual(['google/gemma-4-26b-a4b-it:free']);
+      }
+    });
+
+    it('treats blank values as the default ladder', () => {
+      const result = loadConfig({ ...base(), HF_POLISH_MODELS: '  ', OPENROUTER_POLISH_MODELS: '' });
+      expect(result.ok && result.config.hfPolishModels).toEqual([]);
+      expect(result.ok && result.config.openRouterPolishModels).toEqual([]);
+    });
+
+    it('rejects entries that are not org/model ids, naming the variable', () => {
+      const result = loadConfig({ ...base(), HF_POLISH_MODELS: 'good/model, justaname', OPENROUTER_POLISH_MODELS: '/x' });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.errors).toEqual([
+          'HF_POLISH_MODELS has "justaname", which is not a model id like org/model[:provider].',
+          'OPENROUTER_POLISH_MODELS has "/x", which is not a model id like org/model[:provider].',
+        ]);
+      }
     });
   });
 });

@@ -1,5 +1,6 @@
 import { fork, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
+import { suspendProcess } from './processSignal';
 import { createLocalTranscriptionSession, type WorkerLike } from '@/utils/localTranscriptionSession';
 
 type Listener = (event: never) => void;
@@ -51,7 +52,38 @@ export function adaptEngineProcess(child: ChildProcess): WorkerLike {
 }
 
 export function createNodeWhisperSession() {
-  return createLocalTranscriptionSession(() =>
-    adaptEngineProcess(fork(path.join(__dirname, 'whisperNode.process.ts'), { serialization: 'advanced' }))
-  );
+  let engine: ChildProcess | null = null;
+  let paused = false;
+
+  const session = createLocalTranscriptionSession(() => {
+    const child = fork(path.join(__dirname, 'whisperNode.process.ts'), { serialization: 'advanced' });
+    engine = child;
+    child.once('exit', () => {
+      if (engine === child) engine = null;
+    });
+    if (paused) suspendProcess(child, true);
+    return adaptEngineProcess(child);
+  });
+
+  const cancel = () => {
+    paused = false;
+    session.cancel();
+  };
+
+  return {
+    run: session.run,
+    cancel,
+    dispose: cancel,
+    /** Freezes or thaws the engine process; the stall watchdog is suspended for the duration. */
+    setPaused: (next: boolean) => {
+      paused = next;
+      if (next) {
+        session.pause();
+        suspendProcess(engine, true);
+      } else {
+        suspendProcess(engine, false);
+        session.resume();
+      }
+    },
+  };
 }
